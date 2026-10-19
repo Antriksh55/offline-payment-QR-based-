@@ -95,7 +95,9 @@ export async function syncPendingTransactions(token, vpa, deviceId) {
     });
     if (balRes.ok) {
       const balData = await balRes.json();
-      newBalance = balData.available;
+      // Use `balance` (credits - debits), NOT `available` (balance - holds).
+      // Storing `available` would double-count any active offline float HOLD.
+      newBalance = balData.balance ?? balData.available;
       await updateWalletMeta({ lastSyncedBalance: newBalance });
     }
   } catch {

@@ -100,10 +100,20 @@ export default function SendPage({ user, onBack, deviceId }) {
       let deviceSeq = undefined;
       if (floatMeta?.floatNextSeq !== undefined) {
         deviceSeq = floatMeta.floatNextSeq;
+        // NOTE: We update floatNextSeq and floatSpentOffline here optimistically.
+        // If the user later cancels, handleCancel() will roll these back.
         await updateWalletMeta({
           floatNextSeq: deviceSeq + 1,
           floatSpentOffline: (floatMeta.floatSpentOffline || 0) + pendingPaise
         });
+        // Keep a snapshot so cancel can roll back precisely
+        setFloatMeta((prev) => ({
+          ...prev,
+          floatNextSeq: deviceSeq + 1,
+          floatSpentOffline: (prev?.floatSpentOffline || 0) + pendingPaise,
+          _preGenerateSeq: deviceSeq,
+          _preGenerateSpent: prev?.floatSpentOffline || 0
+        }));
       }
 
       const txn = buildSignedTransaction({
@@ -148,12 +158,25 @@ export default function SendPage({ user, onBack, deviceId }) {
   // ── Cancel: QR not scanned → CANCELLED, balance unchanged ─────────────────
   async function handleCancel() {
     if (signedTxn) await cancelSentTransaction(signedTxn.txnId);
+
+    // Roll back floatSpentOffline and floatNextSeq if they were incremented
+    if (floatMeta?._preGenerateSeq !== undefined) {
+      await updateWalletMeta({
+        floatNextSeq: floatMeta._preGenerateSeq,
+        floatSpentOffline: floatMeta._preGenerateSpent
+      });
+    }
+
     setQrDataUrl(null);
     setSignedTxn(null);
     setAmountRupees('');
     setError('');
     setWarning('');
     setConfirmed(false);
+    setPendingPaise(null);
+    // Re-read fresh meta so floatMeta state is correct
+    const freshMeta = await getWalletMeta();
+    setFloatMeta(freshMeta);
     const { balance: newBal } = await computeLocalBalance();
     setBalance(newBal);
   }

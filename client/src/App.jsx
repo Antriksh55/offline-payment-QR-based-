@@ -72,7 +72,10 @@ export default function App() {
         .then((r) => r.json())
         .then(async (data) => {
           if (typeof data.available === 'number') {
-            await updateWalletMeta({ lastSyncedBalance: data.available });
+            // Store `balance` (credits - debits), NOT `available` (balance - holds).
+            // The HOLD reduction is handled by the float guard, not the local balance calc.
+            // Using `available` here would double-count the hold deduction.
+            await updateWalletMeta({ lastSyncedBalance: data.balance ?? data.available });
           }
         })
         .catch((err) => console.info('[Balance] Could not fetch server balance:', err.message));
