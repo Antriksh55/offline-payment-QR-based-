@@ -2,12 +2,12 @@
  * Send Page — Module 10 UI + Module 3 (QR Generation)
  *
  * Flow:
- *   1. Enter amount → Generate QR (transaction recorded as PENDING_SCAN — does NOT affect balance)
- *   2. Receiver scans QR → Sender taps "Confirm Sent" → status moves to PENDING_SYNC (balance deducted)
- *   3. OR sender taps "Cancel" → status set to CANCELLED, balance unchanged
- *
- * The balance only decreases once the sender explicitly confirms the receiver scanned.
- * Generating a QR and then backing out leaves the balance untouched.
+ *   1. Enter amount → tap Generate
+ *   2. ── UPI PIN modal (verified offline via SHA-256 in IndexedDB) ──
+ *   3. On PIN success → build signed transaction, record as PENDING_SCAN (balance unchanged)
+ *   4. QR displayed → receiver scans → sender taps "Confirm Payment"
+ *   5. Status → PENDING_SYNC, balance deducted
+ *   6. OR sender taps "Cancel" → CANCELLED, balance unchanged
  */
 
 import { useState, useEffect } from 'react';
@@ -22,6 +22,7 @@ import {
   updateWalletMeta
 } from '../ledger/localLedger';
 import { getKeypair } from '../identity/keyStore';
+import PinModal from '../components/PinModal';
 import '../styles/send.css';
 
 export default function SendPage({ user, onBack, deviceId }) {
@@ -33,13 +34,17 @@ export default function SendPage({ user, onBack, deviceId }) {
   const [loading, setLoading] = useState(false);
   const [balance, setBalance] = useState(0);
   const [floatMeta, setFloatMeta] = useState(null);
-  const [confirmed, setConfirmed] = useState(false); // true after sender taps "Receiver scanned it"
+  const [confirmed, setConfirmed] = useState(false);
+  // PIN modal state
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pendingPaise, setPendingPaise] = useState(null); // amount waiting for PIN
 
   useEffect(() => {
     computeLocalBalance().then(({ balance: b }) => setBalance(b));
     getWalletMeta().then((meta) => setFloatMeta(meta));
   }, []);
 
+  // ── Step 1: Validate amount, then show PIN modal ───────────────────────────
   async function handleGenerate(e) {
     e.preventDefault();
     setError('');
@@ -54,13 +59,14 @@ export default function SendPage({ user, onBack, deviceId }) {
     if (validationResult) {
       if (validationResult.startsWith('__WARN__:')) {
         setWarning(validationResult.replace('__WARN__:', ''));
+        // non-blocking — fall through to PIN
       } else {
         setError(validationResult);
         return;
       }
     }
 
-    // Offline float guard (client-side UX only — real protection is server-side HOLD)
+    // Offline float guard
     if (floatMeta?.floatReservedAmount && floatMeta?.floatExpiresAt) {
       const expiresAt = new Date(floatMeta.floatExpiresAt);
       const spentSoFar = floatMeta.floatSpentOffline || 0;
@@ -77,7 +83,16 @@ export default function SendPage({ user, onBack, deviceId }) {
       }
     }
 
+    // Store the validated amount and show the PIN modal
+    setPendingPaise(paise);
+    setShowPinModal(true);
+  }
+
+  // ── Step 2: PIN verified → actually build & record transaction ─────────────
+  async function handlePinSuccess() {
+    setShowPinModal(false);
     setLoading(true);
+
     try {
       const keypair = await getKeypair();
       if (!keypair) { setError('No keys found. Please re-register.'); return; }
@@ -87,38 +102,42 @@ export default function SendPage({ user, onBack, deviceId }) {
         deviceSeq = floatMeta.floatNextSeq;
         await updateWalletMeta({
           floatNextSeq: deviceSeq + 1,
-          floatSpentOffline: (floatMeta.floatSpentOffline || 0) + paise
+          floatSpentOffline: (floatMeta.floatSpentOffline || 0) + pendingPaise
         });
       }
 
       const txn = buildSignedTransaction({
         senderVpa: user.vpa,
-        amount: paise,
+        amount: pendingPaise,
         privateKeyB64: keypair.privateKeyB64,
         publicKeyB64: keypair.publicKeyB64,
         deviceId: deviceId || undefined,
         deviceSeq
       });
 
-      // Record as PENDING_SCAN — balance does NOT change yet
+      // Record as PENDING_SCAN — balance NOT yet affected
       await recordSentTransaction(txn);
 
       const dataUrl = await generateQRCode(txn);
       setQrDataUrl(dataUrl);
       setSignedTxn(txn);
     } catch (err) {
-      setError(`Failed to generate QR: ${err.message}`);
+      setError(`Payment failed: ${err.message}`);
     } finally {
       setLoading(false);
     }
   }
 
-  // Sender confirms the receiver scanned the QR → move to PENDING_SYNC (balance now deducted)
+  function handlePinCancel() {
+    setShowPinModal(false);
+    setPendingPaise(null);
+  }
+
+  // ── Confirm: receiver scanned → PENDING_SYNC (balance deducted now) ─────────
   async function handleConfirmSent() {
     try {
       await confirmSentTransaction(signedTxn.txnId);
       setConfirmed(true);
-      // Refresh balance display
       const { balance: newBal } = await computeLocalBalance();
       setBalance(newBal);
     } catch (err) {
@@ -126,23 +145,19 @@ export default function SendPage({ user, onBack, deviceId }) {
     }
   }
 
-  // User cancels — removes the debit from balance, marks CANCELLED
+  // ── Cancel: QR not scanned → CANCELLED, balance unchanged ─────────────────
   async function handleCancel() {
-    if (signedTxn) {
-      await cancelSentTransaction(signedTxn.txnId);
-    }
+    if (signedTxn) await cancelSentTransaction(signedTxn.txnId);
     setQrDataUrl(null);
     setSignedTxn(null);
     setAmountRupees('');
     setError('');
     setWarning('');
     setConfirmed(false);
-    // Refresh balance
     const { balance: newBal } = await computeLocalBalance();
     setBalance(newBal);
   }
 
-  // New transaction after confirming
   async function handleNewTransaction() {
     setQrDataUrl(null);
     setSignedTxn(null);
@@ -158,8 +173,21 @@ export default function SendPage({ user, onBack, deviceId }) {
 
   return (
     <div className="send-page">
+      {/* PIN Modal — shown before every payment, verified offline */}
+      {showPinModal && (
+        <PinModal
+          amountDisplay={pendingPaise ? fmt(pendingPaise) : ''}
+          onSuccess={handlePinSuccess}
+          onCancel={handlePinCancel}
+        />
+      )}
+
       <header className="page-header">
-        <button className="btn-back" onClick={signedTxn && !confirmed ? handleCancel : onBack} aria-label="Back">←</button>
+        <button
+          className="btn-back"
+          onClick={signedTxn && !confirmed ? handleCancel : onBack}
+          aria-label="Back"
+        >←</button>
         <h2>Send Money</h2>
       </header>
 
@@ -193,18 +221,19 @@ export default function SendPage({ user, onBack, deviceId }) {
 
           {warning && <div className="warning-msg" role="alert">⚠️ {warning}</div>}
           {error && <div className="error-msg" role="alert">{error}</div>}
+          {loading && <div className="loading-hint">Generating QR…</div>}
 
           <button type="submit" className="btn-primary" disabled={loading || !amountRupees}>
-            {loading ? 'Generating QR...' : 'Generate QR Code'}
+            {loading ? 'Please wait...' : '🔐 Enter PIN & Generate QR'}
           </button>
         </form>
       )}
 
-      {/* ── Step 2: QR display — waiting for receiver to scan ── */}
+      {/* ── Step 2: QR display ── */}
       {qrDataUrl && !confirmed && (
         <div className="qr-display">
           <div className="qr-status-banner pending">
-            📱 Show this QR to the recipient — it's valid for <strong>5 minutes</strong>
+            📱 Show this QR to the recipient — valid for <strong>5 minutes</strong>
           </div>
 
           <div className="qr-container">
@@ -222,7 +251,11 @@ export default function SendPage({ user, onBack, deviceId }) {
             </div>
             <div className="summary-row">
               <span>Transaction ID</span>
-              <code className="txn-id">{signedTxn.txnId.slice(0, 8)}…</code>
+              <code className="txn-id-full">{signedTxn.txnId}</code>
+            </div>
+            <div className="summary-row">
+              <span>Date &amp; Time</span>
+              <span>{new Date(signedTxn.timestamp).toLocaleString()}</span>
             </div>
             <div className="summary-row">
               <span>Status</span>
@@ -232,18 +265,14 @@ export default function SendPage({ user, onBack, deviceId }) {
 
           {error && <div className="error-msg" role="alert">{error}</div>}
 
-          {/* Sender confirms receiver has scanned */}
           <button className="btn-primary confirm-btn" onClick={handleConfirmSent}>
             ✓ Receiver Scanned — Confirm Payment
           </button>
-
-          {/* Cancel — removes the pending entry, balance stays unchanged */}
           <button className="btn-cancel" onClick={handleCancel}>
             ✕ Cancel — Receiver Didn't Scan
           </button>
-
           <p className="cancel-hint">
-            Your balance won't change until you tap "Confirm Payment" above.
+            Your balance won't change until you tap "Confirm Payment".
           </p>
         </div>
       )}
@@ -261,8 +290,16 @@ export default function SendPage({ user, onBack, deviceId }) {
               <strong className="amount-sent">{fmt(signedTxn.amount)}</strong>
             </div>
             <div className="summary-row">
-              <span>From</span>
-              <strong>{signedTxn.senderVpa}</strong>
+              <span>To</span>
+              <strong>{signedTxn.receiverVpa || '(receiver VPA pending)'}</strong>
+            </div>
+            <div className="summary-row">
+              <span>Transaction ID</span>
+              <code className="txn-id-full">{signedTxn.txnId}</code>
+            </div>
+            <div className="summary-row">
+              <span>Date &amp; Time</span>
+              <span>{new Date(signedTxn.timestamp).toLocaleString()}</span>
             </div>
             <div className="summary-row">
               <span>New balance</span>

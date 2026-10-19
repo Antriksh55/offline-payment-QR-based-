@@ -116,3 +116,23 @@
   display: block;
 }
 .demo-otp-banner small { opacity: 0.8; font-size: 0.8rem; }
+
+/* PIN setup step */
+.pin-field { display: flex; flex-direction: column; gap: 6px; }
+.pin-field label { font-size: 0.85rem; font-weight: 600; color: #636e72; }
+
+.pin-info-box {
+  background: #f8f7ff; border: 1px solid #a29bfe; border-radius: 10px;
+  padding: 10px 14px; font-size: 0.8rem; color: #6c5ce7; line-height: 1.5;
+}
+
+/* Step dots for multi-step form */
+.step-dots {
+  display: flex; justify-content: center; gap: 8px; margin-top: 20px;
+}
+.step-dots .dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #dfe6e9;
+  transition: background 0.2s, transform 0.2s;
+}
+.step-dots .dot.active { background: #6c5ce7; transform: scale(1.3); }
+.step-dots .dot.done   { background: #a29bfe; }

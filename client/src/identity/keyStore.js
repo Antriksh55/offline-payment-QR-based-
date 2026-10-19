@@ -16,9 +16,11 @@ import nacl from 'tweetnacl';
 import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
 
 const DB_NAME = 'OfflinePaymentDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;          // bumped: added 'pinstore' object store
 const KEYSTORE_STORE = 'keystore';
 const KEYPAIR_KEY = 'userKeypair';
+const PIN_STORE = 'pinstore';
+const PIN_KEY = 'upiPin';
 
 let dbPromise = null;
 
@@ -33,7 +35,7 @@ function openDB() {
 
     request.onupgradeneeded = (event) => {
       const db = event.target.result;
-      // keystore: stores the keypair
+      // keystore: stores the Ed25519 keypair
       if (!db.objectStoreNames.contains(KEYSTORE_STORE)) {
         db.createObjectStore(KEYSTORE_STORE);
       }
@@ -49,6 +51,12 @@ function openDB() {
       // walletMeta: cached balance and sync state
       if (!db.objectStoreNames.contains('walletMeta')) {
         db.createObjectStore('walletMeta');
+      }
+      // pinstore: stores the hashed UPI PIN (set during registration)
+      // SECURITY NOTE: In production, use PBKDF2 or bcrypt with a salt stored separately.
+      // For this demo, we use SHA-256 via Web Crypto (available offline, no library needed).
+      if (!db.objectStoreNames.contains(PIN_STORE)) {
+        db.createObjectStore(PIN_STORE);
       }
     };
 
@@ -128,3 +136,69 @@ export async function replaceKeypair(publicKeyB64, privateKeyB64) {
 }
 
 export { openDB };
+
+// ── UPI PIN helpers ────────────────────────────────────────────────────────
+
+/**
+ * Hash a PIN using SHA-256 via the Web Crypto API.
+ * Works fully offline — no library needed.
+ * In production use PBKDF2 with a unique salt per device.
+ */
+async function hashPin(pin) {
+  const data = new TextEncoder().encode(`offlinepay:${pin}`);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Save a new UPI PIN (hashed) to IndexedDB.
+ * Called once during registration, or on PIN change.
+ * @param {string} pin - 4-6 digit PIN (plain text — never stored raw)
+ */
+export async function savePin(pin) {
+  const db = await openDB();
+  const hashed = await hashPin(pin);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PIN_STORE, 'readwrite');
+    const store = tx.objectStore(PIN_STORE);
+    const req = store.put(hashed, PIN_KEY);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Verify a PIN against the stored hash.
+ * Returns true if correct, false if wrong, null if no PIN is set yet.
+ * Works 100% offline — no server call needed.
+ * @param {string} pin - plain text PIN entered by user
+ */
+export async function verifyPin(pin) {
+  const db = await openDB();
+  const storedHash = await new Promise((resolve, reject) => {
+    const tx = db.transaction(PIN_STORE, 'readonly');
+    const store = tx.objectStore(PIN_STORE);
+    const req = store.get(PIN_KEY);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+
+  if (storedHash === null) return null; // PIN not set yet
+  const enteredHash = await hashPin(pin);
+  return enteredHash === storedHash;
+}
+
+/**
+ * Check if a PIN has been set for this device.
+ */
+export async function hasPin() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PIN_STORE, 'readonly');
+    const store = tx.objectStore(PIN_STORE);
+    const req = store.get(PIN_KEY);
+    req.onsuccess = () => resolve(req.result !== undefined && req.result !== null);
+    req.onerror = () => reject(req.error);
+  });
+}

@@ -1,16 +1,21 @@
 /**
  * Registration & Login Page — Module 11 UI
  *
- * Flow:
- * 1. Enter mobile number → request OTP
- * 2. OTP displayed on-screen (demo mode — no SMS)
- * 3. Enter OTP + name + bank (if new user)
- * 4. Keys generated client-side, public key sent to backend
- * 5. JWT + VPA returned, redirected to dashboard
+ * Flow (new user):
+ *   1. Enter mobile number → request OTP
+ *   2. OTP displayed on-screen (demo mode)
+ *   3. Enter OTP → if new user go to PROFILE, if returning user go to BINDING
+ *   4. Enter name + bank → go to PIN setup
+ *   5. Set 4–6 digit UPI PIN (stored hashed in IndexedDB — works offline)
+ *   6. Generate keypair, bind key to server → dashboard
+ *
+ * Flow (returning user, same device): silent challenge/response — no steps shown
+ * Flow (returning user, new device): OTP → BINDING → PIN setup → dashboard
  */
 
 import { useState, useEffect } from 'react';
 import { getOrCreateKeypair } from '../identity/keyStore';
+import { savePin } from '../identity/keyStore';
 import { api } from '../api/client';
 import '../styles/register.css';
 
@@ -18,6 +23,7 @@ const STEPS = {
   PHONE: 'phone',
   OTP: 'otp',
   PROFILE: 'profile',
+  PIN: 'pin',
   BINDING: 'binding'
 };
 
@@ -29,17 +35,20 @@ export default function RegisterPage({ onLogin }) {
   const [displayName, setDisplayName] = useState('');
   const [bankId, setBankId] = useState('');
   const [banks, setBanks] = useState([]);
+  const [pin, setPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [isNewUser, setIsNewUser] = useState(false);
   const [otpCountdown, setOtpCountdown] = useState(0);
   const [partialToken, setPartialToken] = useState(null);
+  const [isNewUser, setIsNewUser] = useState(false);
+  // Store resolved profile before PIN step (for new users)
+  const [pendingProfile, setPendingProfile] = useState(null);
 
   useEffect(() => {
     api.getBanks().then((data) => setBanks(data.banks)).catch(() => {});
   }, []);
 
-  // OTP countdown timer
   useEffect(() => {
     if (otpCountdown > 0) {
       const timer = setTimeout(() => setOtpCountdown(otpCountdown - 1), 1000);
@@ -47,6 +56,7 @@ export default function RegisterPage({ onLogin }) {
     }
   }, [otpCountdown]);
 
+  // ── Step 1: Request OTP ────────────────────────────────────────────────────
   async function handleRequestOtp(e) {
     e.preventDefault();
     setError('');
@@ -54,7 +64,7 @@ export default function RegisterPage({ onLogin }) {
     try {
       const result = await api.requestOtp(mobileNumber);
       setDemoOtp(result.demoOtp);
-      setOtpCountdown(30); // rate limit cooldown
+      setOtpCountdown(30);
       setStep(STEPS.OTP);
     } catch (err) {
       setError(err.message);
@@ -63,20 +73,18 @@ export default function RegisterPage({ onLogin }) {
     }
   }
 
+  // ── Step 2: Verify OTP ─────────────────────────────────────────────────────
   async function handleVerifyOtp(e) {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
       const result = await api.verifyOtp(mobileNumber, otp);
-
       if (!result.isNewUser) {
-        // Returning user — go straight to key binding
         setPartialToken(result.partialToken);
         setIsNewUser(false);
         setStep(STEPS.BINDING);
       } else {
-        // New user — collect profile info
         setIsNewUser(true);
         setStep(STEPS.PROFILE);
       }
@@ -87,17 +95,52 @@ export default function RegisterPage({ onLogin }) {
     }
   }
 
-  async function handleCompleteRegistration(e) {
+  // ── Step 3: Profile (new user) → then go to PIN ────────────────────────────
+  function handleProfileNext(e) {
     e.preventDefault();
     if (!displayName.trim()) { setError('Display name is required'); return; }
     if (!bankId) { setError('Please choose a bank'); return; }
     setError('');
+    setPendingProfile({ displayName: displayName.trim(), bankId });
+    setStep(STEPS.PIN);
+  }
+
+  // ── Step 4: PIN setup ──────────────────────────────────────────────────────
+  async function handleSetPin(e) {
+    e.preventDefault();
+    setError('');
+
+    if (!/^\d{4,6}$/.test(pin)) {
+      setError('PIN must be 4–6 digits');
+      return;
+    }
+    if (pin !== confirmPin) {
+      setError('PINs do not match');
+      return;
+    }
+
     setLoading(true);
     try {
-      const keypair = await getOrCreateKeypair();
-      const result = await api.bindKey(mobileNumber, keypair.publicKeyB64, displayName, bankId);
+      // Save hashed PIN to IndexedDB — works 100% offline
+      await savePin(pin);
 
-      onLogin(result.token, result.vpa, result.displayName);
+      if (isNewUser && pendingProfile) {
+        // New user: bind key to server
+        const keypair = await getOrCreateKeypair();
+        const result = await api.bindKey(
+          mobileNumber,
+          keypair.publicKeyB64,
+          pendingProfile.displayName,
+          pendingProfile.bankId
+        );
+        onLogin(result.token, result.vpa, result.displayName);
+      } else {
+        // Returning user new device: bind new key
+        const keypair = await getOrCreateKeypair();
+        if (partialToken) localStorage.setItem('authToken', partialToken);
+        const result = await api.bindKey(mobileNumber, keypair.publicKeyB64);
+        onLogin(result.token, result.vpa, result.displayName);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -105,24 +148,11 @@ export default function RegisterPage({ onLogin }) {
     }
   }
 
-  async function handleNewDeviceBind(e) {
+  // ── Returning user new device: go through PIN setup ────────────────────────
+  function handleBindingNext(e) {
     e.preventDefault();
     setError('');
-    setLoading(true);
-    try {
-      // Generate a new keypair for this device
-      const keypair = await getOrCreateKeypair();
-
-      // Temporarily set auth token to partial token so api.bindKey sends it
-      if (partialToken) localStorage.setItem('authToken', partialToken);
-
-      const result = await api.bindKey(mobileNumber, keypair.publicKeyB64);
-      onLogin(result.token, result.vpa, result.displayName);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+    setStep(STEPS.PIN);
   }
 
   return (
@@ -134,7 +164,7 @@ export default function RegisterPage({ onLogin }) {
           <p className="logo-subtitle">Offline QR Payments</p>
         </div>
 
-        {/* STEP 1: Phone Number */}
+        {/* ── STEP 1: Phone ── */}
         {step === STEPS.PHONE && (
           <form onSubmit={handleRequestOtp} className="register-form">
             <h2>Sign In or Register</h2>
@@ -159,12 +189,10 @@ export default function RegisterPage({ onLogin }) {
           </form>
         )}
 
-        {/* STEP 2: OTP Entry */}
+        {/* ── STEP 2: OTP ── */}
         {step === STEPS.OTP && (
           <form onSubmit={handleVerifyOtp} className="register-form">
             <h2>Enter OTP</h2>
-
-            {/* Demo-mode OTP banner — this is the on-screen OTP per spec */}
             {demoOtp && (
               <div className="demo-otp-banner" role="status">
                 <strong>Demo mode — your OTP is:</strong>
@@ -172,7 +200,6 @@ export default function RegisterPage({ onLogin }) {
                 <small>In production, this would be sent via SMS</small>
               </div>
             )}
-
             <input
               type="text"
               placeholder="6-digit OTP"
@@ -185,13 +212,10 @@ export default function RegisterPage({ onLogin }) {
               inputMode="numeric"
               autoComplete="one-time-code"
             />
-
             {error && <div className="error-msg" role="alert">{error}</div>}
-
             <button type="submit" className="btn-primary" disabled={loading || otp.length !== 6}>
               {loading ? 'Verifying...' : 'Verify OTP'}
             </button>
-
             <button
               type="button"
               className="btn-link"
@@ -203,12 +227,11 @@ export default function RegisterPage({ onLogin }) {
           </form>
         )}
 
-        {/* STEP 3a: New user profile */}
+        {/* ── STEP 3: Profile (new user) ── */}
         {step === STEPS.PROFILE && (
-          <form onSubmit={handleCompleteRegistration} className="register-form">
-            <h2>Complete Registration</h2>
-            <p className="step-hint">Choose your display name and bank</p>
-
+          <form onSubmit={handleProfileNext} className="register-form">
+            <h2>Your Profile</h2>
+            <p className="step-hint">Step 1 of 2 — Choose your name and bank</p>
             <input
               type="text"
               placeholder="Your name (e.g. Alice)"
@@ -218,7 +241,6 @@ export default function RegisterPage({ onLogin }) {
               className="text-input"
               aria-label="Display name"
             />
-
             <select
               value={bankId}
               onChange={(e) => setBankId(e.target.value)}
@@ -231,27 +253,88 @@ export default function RegisterPage({ onLogin }) {
                 <option key={b._id} value={b._id}>{b.name}</option>
               ))}
             </select>
-
             {error && <div className="error-msg" role="alert">{error}</div>}
-
-            <button type="submit" className="btn-primary" disabled={loading}>
-              {loading ? 'Creating account...' : 'Create Account'}
+            <button type="submit" className="btn-primary">
+              Continue →
             </button>
           </form>
         )}
 
-        {/* STEP 3b: Returning user new device */}
+        {/* ── STEP 3b: Returning user new device ── */}
         {step === STEPS.BINDING && (
-          <form onSubmit={handleNewDeviceBind} className="register-form">
+          <form onSubmit={handleBindingNext} className="register-form">
             <h2>New Device Detected</h2>
             <p className="step-hint">
-              We'll generate a new key for this device. Your old device will be deauthorized.
+              A new device key will be generated. Your old device will be deauthorized.
             </p>
             {error && <div className="error-msg" role="alert">{error}</div>}
-            <button type="submit" className="btn-primary" disabled={loading}>
-              {loading ? 'Binding key...' : 'Authorize This Device'}
+            <button type="submit" className="btn-primary">
+              Continue →
             </button>
           </form>
+        )}
+
+        {/* ── STEP 4: Set UPI PIN ── */}
+        {step === STEPS.PIN && (
+          <form onSubmit={handleSetPin} className="register-form">
+            <h2>Set UPI PIN</h2>
+            <p className="step-hint">
+              {isNewUser ? 'Step 2 of 2 — ' : ''}
+              This PIN will be required before every payment. It is stored <strong>only on this device</strong> — never sent to any server.
+            </p>
+
+            <div className="pin-field">
+              <label htmlFor="pin-input">Enter PIN (4–6 digits)</label>
+              <input
+                id="pin-input"
+                type="password"
+                inputMode="numeric"
+                placeholder="••••"
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                required
+                pattern="\d{4,6}"
+                className="otp-input"
+                aria-label="UPI PIN"
+                autoComplete="new-password"
+              />
+            </div>
+
+            <div className="pin-field">
+              <label htmlFor="pin-confirm">Confirm PIN</label>
+              <input
+                id="pin-confirm"
+                type="password"
+                inputMode="numeric"
+                placeholder="••••"
+                value={confirmPin}
+                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                required
+                className="otp-input"
+                aria-label="Confirm UPI PIN"
+                autoComplete="new-password"
+              />
+            </div>
+
+            <div className="pin-info-box">
+              🔒 Your PIN is hashed with SHA-256 and stored only in this browser's IndexedDB.
+              It works completely offline — no internet needed to verify.
+            </div>
+
+            {error && <div className="error-msg" role="alert">{error}</div>}
+
+            <button type="submit" className="btn-primary" disabled={loading || pin.length < 4 || confirmPin.length < 4}>
+              {loading ? 'Setting up...' : 'Set PIN & Create Account'}
+            </button>
+          </form>
+        )}
+
+        {/* Step indicator */}
+        {(step === STEPS.PROFILE || step === STEPS.PIN) && (
+          <div className="step-dots">
+            <span className={`dot ${step === STEPS.PROFILE ? 'active' : 'done'}`} />
+            <span className={`dot ${step === STEPS.PIN ? 'active' : ''}`} />
+          </div>
         )}
       </div>
     </div>

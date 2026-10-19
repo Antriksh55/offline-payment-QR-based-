@@ -1,0 +1,105 @@
+/* PIN Modal */
+.pin-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  backdrop-filter: blur(2px);
+}
+
+.pin-modal {
+  background: #fff;
+  border-radius: 20px;
+  padding: 32px 28px;
+  width: 100%;
+  max-width: 360px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  animation: slideUp 0.2s ease;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(24px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+.pin-modal-header { text-align: center; margin-bottom: 24px; }
+.pin-lock-icon { font-size: 2.5rem; margin-bottom: 8px; }
+.pin-modal-header h3 { font-size: 1.2rem; font-weight: 700; margin-bottom: 4px; }
+.pin-amount { color: #2d3436; font-size: 0.95rem; margin: 4px 0; }
+.pin-offline-note {
+  font-size: 0.75rem;
+  color: #00b894;
+  margin-top: 6px;
+  font-weight: 600;
+}
+
+/* Dot indicator */
+.pin-dots {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.pin-dot {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #dfe6e9;
+  transition: background 0.15s;
+}
+.pin-dot.filled { background: #6c5ce7; transform: scale(1.15); }
+
+/* Hidden input overlaid on the dots */
+.pin-hidden-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px; height: 1px;
+  pointer-events: none; /* clicks go to dots which trigger focus via JS */
+}
+
+/* Make the whole modal clickable to focus the hidden input */
+.pin-form { cursor: pointer; position: relative; }
+
+.pin-error {
+  background: #fff0f0;
+  color: #d63031;
+  border: 1px solid #ffb3b3;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  margin-bottom: 14px;
+  text-align: center;
+}
+
+.pin-actions {
+  display: flex;
+  gap: 10px;
+}
+.btn-pin-cancel {
+  flex: 1;
+  padding: 13px;
+  background: transparent;
+  color: #636e72;
+  border: 2px solid #dfe6e9;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-pin-confirm {
+  flex: 2;
+  padding: 13px;
+  background: #6c5ce7;
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-pin-confirm:hover:not(:disabled) { background: #5a4fcf; }
+.btn-pin-confirm:disabled { opacity: 0.45; cursor: not-allowed; }

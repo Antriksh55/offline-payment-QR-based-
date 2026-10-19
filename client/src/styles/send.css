@@ -150,3 +150,9 @@
 }
 
 .amount-sent { color: #d63031; font-size: 1.1rem; }
+
+.txn-id-full {
+  font-size: 0.72rem; color: #6c5ce7; word-break: break-all;
+  font-family: monospace; text-align: right;
+}
+.loading-hint { text-align: center; color: #636e72; font-size: 0.85rem; }
