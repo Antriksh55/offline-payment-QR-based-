@@ -12,10 +12,12 @@ import { api } from '../api/client';
 import '../styles/dashboard.css';
 
 const STATUS_LABELS = {
+  [TXN_STATUS.PENDING_SCAN]: { label: 'Awaiting Scan', className: 'status-awaiting' },
   [TXN_STATUS.PENDING_SYNC]: { label: 'Pending Sync', className: 'status-pending' },
   [TXN_STATUS.CONFIRMED]: { label: 'Confirmed', className: 'status-confirmed' },
   [TXN_STATUS.REJECTED_DOUBLE_SPEND]: { label: 'Rejected (Double Spend)', className: 'status-rejected' },
-  [TXN_STATUS.REJECTED]: { label: 'Rejected', className: 'status-rejected' }
+  [TXN_STATUS.REJECTED]: { label: 'Rejected', className: 'status-rejected' },
+  [TXN_STATUS.CANCELLED]: { label: 'Cancelled', className: 'status-cancelled' }
 };
 
 export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) {

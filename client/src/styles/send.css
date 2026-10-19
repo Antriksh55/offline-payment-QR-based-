@@ -97,3 +97,56 @@
 }
 .summary-row span { color: #636e72; }
 .txn-id { font-size: 0.8rem; color: #6c5ce7; }
+
+/* QR status banners */
+.qr-status-banner {
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  text-align: center;
+  line-height: 1.5;
+}
+.qr-status-banner.pending { background: #e8f4fd; color: #1565c0; border: 1px solid #90caf9; }
+.qr-status-banner.success { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+
+/* Status tags in summary */
+.status-tag {
+  font-size: 0.75rem;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+.status-tag.pending-scan { background: #e8f4fd; color: #1565c0; }
+.status-tag.pending-sync { background: #f0f0f0; color: #636e72; }
+
+/* Confirm button — green */
+.confirm-btn {
+  background: #00b894 !important;
+}
+.confirm-btn:hover:not(:disabled) { background: #00a381 !important; }
+
+/* Cancel button */
+.btn-cancel {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  background: transparent;
+  color: #d63031;
+  border: 2px solid #d63031;
+  border-radius: 12px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-cancel:hover { background: #fff0f0; }
+
+.cancel-hint {
+  font-size: 0.78rem;
+  color: #636e72;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.amount-sent { color: #d63031; font-size: 1.1rem; }

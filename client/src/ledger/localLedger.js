@@ -10,15 +10,24 @@ import { verifyTransaction } from '../transaction/builder';
 
 // Transaction status values
 export const TXN_STATUS = {
-  PENDING_SYNC: 'pending_sync',
+  PENDING_SCAN: 'pending_scan',       // QR generated, not yet scanned by receiver
+  PENDING_SYNC: 'pending_sync',       // Scanned by receiver, waiting for server sync
   CONFIRMED: 'confirmed',
   REJECTED_DOUBLE_SPEND: 'rejected_double_spend',
-  REJECTED: 'rejected'
+  REJECTED: 'rejected',
+  CANCELLED: 'cancelled'             // User cancelled before receiver scanned
 };
 
 /**
- * Record a transaction as sent (outgoing).
- * Called after the sender generates and displays the QR code.
+ * Record a transaction as sent (outgoing) with status PENDING_SCAN.
+ * Called when the sender generates the QR code.
+ *
+ * STATUS = PENDING_SCAN means the QR has been generated but NOT yet scanned.
+ * The balance does NOT change at this point — it only changes once the
+ * receiver scans the QR (status moves to PENDING_SYNC via confirmSentTransaction).
+ *
+ * This prevents the balance from dropping the moment a QR is generated,
+ * before any money has actually changed hands.
  *
  * @param {object} signedTxn - the full signed payload
  */
@@ -36,7 +45,8 @@ export async function recordSentTransaction(signedTxn) {
       counterpartyVpa: signedTxn.receiverVpa || '(pending scan)',
       amount: signedTxn.amount,
       timestamp: signedTxn.timestamp,
-      status: TXN_STATUS.PENDING_SYNC,
+      // PENDING_SCAN: does NOT affect balance yet — receiver hasn't scanned yet
+      status: TXN_STATUS.PENDING_SCAN,
       rawPayload: signedTxn
     };
 
@@ -46,10 +56,32 @@ export async function recordSentTransaction(signedTxn) {
     tx.oncomplete = () => resolve();
     tx.onerror = () => {
       const err = tx.error;
-      // Surface storage quota or other errors to the user — never silently lose a transaction
       reject(new Error(`Failed to store transaction: ${err?.message || 'unknown error'}`));
     };
   });
+}
+
+/**
+ * Confirm a sent transaction after the receiver has scanned the QR.
+ * Moves status from PENDING_SCAN → PENDING_SYNC, which NOW affects balance.
+ *
+ * Called by the sender's app when it receives confirmation that the QR was scanned
+ * (i.e. the receiver's app sends back an ack, or the sender taps "Receiver scanned it").
+ *
+ * @param {string} txnId
+ */
+export async function confirmSentTransaction(txnId) {
+  return updateTransactionStatus(txnId, TXN_STATUS.PENDING_SYNC);
+}
+
+/**
+ * Cancel a pending_scan transaction (user backed out before receiver scanned).
+ * Sets status to CANCELLED so it does not affect balance.
+ *
+ * @param {string} txnId
+ */
+export async function cancelSentTransaction(txnId) {
+  return updateTransactionStatus(txnId, TXN_STATUS.CANCELLED);
 }
 
 /**
@@ -134,6 +166,9 @@ export async function getAllLocalTransactions() {
 
 /**
  * Get all pending_sync transactions (to be sent to the server on next sync).
+ * NOTE: PENDING_SCAN transactions are intentionally excluded — they haven't
+ * been scanned by a receiver yet and cannot be validated by the Switch
+ * (receiverVpa is still empty).
  */
 export async function getPendingSyncTransactions() {
   const db = await openDB();
@@ -205,8 +240,15 @@ export async function computeLocalBalance() {
   let pendingCount = 0;
 
   for (const txn of transactions) {
-    // Only count pending and confirmed — skip rejected
-    if (txn.status === TXN_STATUS.REJECTED || txn.status === TXN_STATUS.REJECTED_DOUBLE_SPEND) {
+    // Only count pending_sync and confirmed — skip rejected, cancelled, and pending_scan.
+    // PENDING_SCAN means QR was generated but receiver hasn't scanned yet —
+    // the money has NOT left the sender's wallet until the QR is scanned.
+    if (
+      txn.status === TXN_STATUS.REJECTED ||
+      txn.status === TXN_STATUS.REJECTED_DOUBLE_SPEND ||
+      txn.status === TXN_STATUS.CANCELLED ||
+      txn.status === TXN_STATUS.PENDING_SCAN
+    ) {
       continue;
     }
     if (txn.direction === 'received') {
