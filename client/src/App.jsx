@@ -14,7 +14,6 @@ import ReceivePage from './pages/ReceivePage';
 import AdminPage from './pages/AdminPage';
 import { requestOfflineFloat } from './sync/syncService';
 import { getOrCreateKeypair } from './identity/keyStore';
-import { updateWalletMeta } from './ledger/localLedger';
 import './styles/global.css';
 
 // Stable device ID — persisted in localStorage (not sensitive)
@@ -59,28 +58,9 @@ export default function App() {
     }
   }, [loading, isAuthenticated, trySilentLogin]);
 
-  // After login, fetch real server balance AND pre-fetch an offline float
+  // After login, pre-fetch an offline float (balance is fetched by DashboardPage directly)
   useEffect(() => {
     if (isAuthenticated && user?.token && user?.vpa) {
-      // Step 1: Always fetch the authoritative balance from the server first.
-      // This seeds lastSyncedBalance so computeLocalBalance() returns a real number
-      // instead of NaN (which happens when lastSyncedBalance is undefined/0 but
-      // the actual account has a seeded balance like ₹5000).
-      fetch(`/api/balance/${encodeURIComponent(user.vpa)}`, {
-        headers: { Authorization: `Bearer ${user.token}` }
-      })
-        .then((r) => r.json())
-        .then(async (data) => {
-          if (typeof data.available === 'number') {
-            // Store `balance` (credits - debits), NOT `available` (balance - holds).
-            // The HOLD reduction is handled by the float guard, not the local balance calc.
-            // Using `available` here would double-count the hold deduction.
-            await updateWalletMeta({ lastSyncedBalance: data.balance ?? data.available });
-          }
-        })
-        .catch((err) => console.info('[Balance] Could not fetch server balance:', err.message));
-
-      // Step 2: Request offline float (does NOT touch lastSyncedBalance)
       requestOfflineFloat(user.token, deviceId).catch((err) => {
         console.info('[Float] Could not pre-fetch float:', err.message);
       });

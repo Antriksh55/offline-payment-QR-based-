@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { computeLocalBalance, getAllLocalTransactions, TXN_STATUS } from '../ledger/localLedger';
+import { computeLocalBalance, getAllLocalTransactions, TXN_STATUS, updateWalletMeta } from '../ledger/localLedger';
 import { syncPendingTransactions } from '../sync/syncService';
 import '../styles/dashboard.css';
 
@@ -34,7 +34,7 @@ function shortId(txnId = '') {
 }
 
 export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) {
-  const [balance, setBalance] = useState(0);
+  const [balance, setBalance] = useState(null); // null = loading, not yet computed
   const [pendingCount, setPendingCount] = useState(0);
   const [transactions, setTransactions] = useState([]);
   const [syncing, setSyncing] = useState(false);
@@ -42,7 +42,8 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
   const [syncError, setSyncError] = useState(null);
   const [serverBalance, setServerBalance] = useState(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [expandedTxn, setExpandedTxn] = useState(null); // txnId of expanded row
+  const [expandedTxn, setExpandedTxn] = useState(null);
+  const [balanceLoading, setBalanceLoading] = useState(true);
 
   // Track online/offline status in real time
   useEffect(() => {
@@ -57,14 +58,39 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
   }, []);
 
   const refreshBalance = useCallback(async () => {
+    setBalanceLoading(true);
     try {
+      // Always try to get authoritative server balance first to seed lastSyncedBalance.
+      // This is the definitive fix for ₹NaN — it ensures the seed balance (₹5000)
+      // is written to IndexedDB BEFORE computeLocalBalance() reads it.
+      if (user?.token && user?.vpa) {
+        try {
+          const res = await fetch(`/api/balance/${encodeURIComponent(user.vpa)}`, {
+            headers: { Authorization: `Bearer ${user.token}` }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            // Use `balance` (credits-debits), NOT `available` (balance-holds)
+            const serverBal = typeof data.balance === 'number' ? data.balance : data.available;
+            if (typeof serverBal === 'number') {
+              await updateWalletMeta({ lastSyncedBalance: serverBal });
+            }
+          }
+        } catch {
+          // Offline — fall through to local computation with cached lastSyncedBalance
+        }
+      }
+
       const { balance: bal, pendingCount: pc } = await computeLocalBalance();
       setBalance(bal);
       setPendingCount(pc);
     } catch (err) {
       console.error('Balance error:', err);
+      setBalance(0);
+    } finally {
+      setBalanceLoading(false);
     }
-  }, []);
+  }, [user?.token, user?.vpa]);
 
   const refreshTransactions = useCallback(async () => {
     try {
@@ -136,7 +162,9 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
       {/* ── Balance Card ── */}
       <div className="balance-card">
         <div className="balance-label">Available Balance</div>
-        <div className="balance-amount">{fmt(balance)}</div>
+        <div className="balance-amount">
+          {balanceLoading ? '…' : fmt(balance ?? 0)}
+        </div>
         {pendingCount > 0 && (
           <div className="balance-pending">
             🔄 {pendingCount} transaction{pendingCount > 1 ? 's' : ''} pending sync

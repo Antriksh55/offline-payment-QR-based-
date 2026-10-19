@@ -29,8 +29,22 @@ export async function syncPendingTransactions(token, vpa, deviceId) {
     return { synced: 0, results: [], newBalance: null };
   }
 
-  // Extract raw payloads to send
-  const payloads = pending.map((t) => t.rawPayload);
+  // Extract raw payloads — filter out any with empty receiverVpa.
+  // A sent transaction has receiverVpa='' until the receiver scans it;
+  // confirmSentTransaction() is supposed to set it before status moves to PENDING_SYNC,
+  // but guard here as a backstop to prevent the server rejecting the whole batch.
+  const validPayloads = pending
+    .map((t) => t.rawPayload)
+    .filter((p) => p && p.txnId && p.senderVpa && p.receiverVpa && p.amount && p.nonce);
+
+  const skipped = pending.length - validPayloads.length;
+  if (skipped > 0) {
+    console.warn(`[Sync] Skipped ${skipped} transaction(s) with missing required fields`);
+  }
+
+  if (validPayloads.length === 0) {
+    return { synced: 0, results: [], newBalance: null, skipped };
+  }
 
   const meta = await getWalletMeta();
   const floatDeviceId = meta.floatDeviceId || deviceId || null;
@@ -45,7 +59,7 @@ export async function syncPendingTransactions(token, vpa, deviceId) {
       },
       body: JSON.stringify({
         deviceId: deviceId || 'unknown',
-        transactions: payloads,
+        transactions: validPayloads,
         floatDeviceId
       })
     });
@@ -104,7 +118,7 @@ export async function syncPendingTransactions(token, vpa, deviceId) {
     // Balance fetch failing is non-fatal — local computation still works
   }
 
-  return { synced: pending.length, results, newBalance };
+  return { synced: validPayloads.length, results, newBalance };
 }
 
 /**

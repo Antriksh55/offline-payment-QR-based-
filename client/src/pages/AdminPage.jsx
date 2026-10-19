@@ -117,10 +117,17 @@ export default function AdminPage({ user, onBack }) {
           <div className={`ledger-check-result ${ledgerCheck.balanced ? 'success' : 'error'}`} role="status">
             <p>{ledgerCheck.message}</p>
             {!ledgerCheck.balanced && (
-              <ul>
-                <li>Total DEBITs: {formatAmount(ledgerCheck.debitTotal)}</li>
-                <li>Total CREDITs: {formatAmount(ledgerCheck.creditTotal)}</li>
-              </ul>
+              <>
+                <ul>
+                  <li>Total DEBITs: {formatAmount(ledgerCheck.debitTotal)}</li>
+                  <li>Total CREDITs: {formatAmount(ledgerCheck.creditTotal)}</li>
+                </ul>
+                {ledgerCheck.debitTotal === 0 && ledgerCheck.creditTotal > 0 && (
+                  <p style={{marginTop:'8px', fontSize:'0.8rem', opacity:0.85}}>
+                    ℹ️ This is expected if no transactions have been synced yet — only seed CREDIT entries exist. Run a payment and sync to create matching DEBITs.
+                  </p>
+                )}
+              </>
             )}
           </div>
         )}
