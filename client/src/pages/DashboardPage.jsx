@@ -158,11 +158,15 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
             const isSent = txn.direction === 'sent';
             const statusInfo = STATUS_LABELS[txn.status] || { label: txn.status, className: '' };
             const isDoubleSpend = txn.status === TXN_STATUS.REJECTED_DOUBLE_SPEND;
+            const isCancelled = txn.status === TXN_STATUS.CANCELLED;
+            const isPendingScan = txn.status === TXN_STATUS.PENDING_SCAN;
+            // Don't show a debit for cancelled or awaiting-scan entries — no money moved
+            const showAmount = !isCancelled && !isPendingScan;
 
             return (
               <div
                 key={txn.txnId}
-                className={`txn-item ${isSent ? 'sent' : 'received'} ${isDoubleSpend ? 'double-spend' : ''}`}
+                className={`txn-item ${isSent ? 'sent' : 'received'} ${isDoubleSpend ? 'double-spend' : ''} ${isCancelled ? 'cancelled' : ''}`}
               >
                 <div className="txn-direction">
                   <span className="txn-arrow">{isSent ? '↑' : '↓'}</span>
@@ -172,8 +176,10 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
                   </div>
                 </div>
                 <div className="txn-right">
-                  <div className={`txn-amount ${isSent ? 'amount-sent' : 'amount-received'}`}>
-                    {isSent ? '-' : '+'}{formatAmount(txn.amount)}
+                  <div className={`txn-amount ${isSent ? 'amount-sent' : 'amount-received'} ${!showAmount ? 'amount-void' : ''}`}>
+                    {showAmount
+                      ? `${isSent ? '-' : '+'}${formatAmount(txn.amount)}`
+                      : '—'}
                   </div>
                   <div className={`txn-status ${statusInfo.className}`}>
                     {statusInfo.label}

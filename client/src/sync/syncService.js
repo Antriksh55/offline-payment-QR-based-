@@ -137,16 +137,18 @@ export async function requestOfflineFloat(token, deviceId) {
 
   const data = await res.json();
 
-  // Persist float info to walletMeta for offline use
+  // Persist float info to walletMeta for offline use.
+  // IMPORTANT: only write float-specific keys — never touch lastSyncedBalance here,
+  // that is managed exclusively by the balance fetch on login and after sync.
+  const currentMeta = await getWalletMeta();
   await updateWalletMeta({
     floatReservedAmount: data.reservedAmount,
     floatExpiresAt: data.expiresAt,
     floatStartingSeq: data.startingSeq,
     floatDeviceId: deviceId,
-    floatSpentOffline: data.reused
-      ? (await getWalletMeta()).floatSpentOffline || 0
-      : 0,
-    floatNextSeq: data.startingSeq
+    // Preserve existing spentOffline if this is a reused float; reset to 0 for a fresh one
+    floatSpentOffline: data.reused ? (currentMeta.floatSpentOffline || 0) : 0,
+    floatNextSeq: data.reused ? (currentMeta.floatNextSeq ?? data.startingSeq) : data.startingSeq
   });
 
   return data;
