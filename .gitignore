@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+client/dist/
+client/.vite/
+
+# Environment files (contain secrets)
+server/.env
+client/.env
+
+# MongoDB data
+/data/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Coverage
+coverage/

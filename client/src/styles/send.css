@@ -1,0 +1,99 @@
+/* Send Page */
+.send-page { display: flex; flex-direction: column; min-height: 100vh; }
+
+.send-form {
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+.balance-hint {
+  color: #636e72;
+  font-size: 0.9rem;
+  text-align: center;
+}
+.float-info {
+  background: #f8f7ff;
+  border: 1px solid #a29bfe;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  color: #6c5ce7;
+  text-align: center;
+}
+
+.amount-input-wrap {
+  display: flex;
+  align-items: center;
+  border: 2px solid #dfe6e9;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.amount-input-wrap:focus-within { border-color: #6c5ce7; }
+.currency-symbol {
+  padding: 16px 12px 16px 18px;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #6c5ce7;
+  background: #f8f7ff;
+  border-right: 2px solid #dfe6e9;
+}
+.amount-input {
+  flex: 1;
+  padding: 16px 16px;
+  border: none;
+  outline: none;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #2d3436;
+  background: transparent;
+}
+.amount-input::placeholder { color: #b2bec3; }
+
+/* QR display */
+.qr-display {
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  flex: 1;
+}
+.qr-instructions {
+  color: #636e72;
+  text-align: center;
+  font-size: 0.9rem;
+}
+.qr-container {
+  background: #fff;
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+}
+.qr-image {
+  display: block;
+  width: 100%;
+  max-width: 300px;
+  height: auto;
+}
+
+.txn-summary {
+  width: 100%;
+  background: #f8f7ff;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+}
+.summary-row span { color: #636e72; }
+.txn-id { font-size: 0.8rem; color: #6c5ce7; }

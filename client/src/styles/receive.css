@@ -1,0 +1,67 @@
+/* Receive Page */
+.receive-page { display: flex; flex-direction: column; min-height: 100vh; }
+
+.scan-idle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 40px 24px;
+}
+.scan-icon { font-size: 4rem; }
+.scan-idle p { color: #636e72; text-align: center; font-size: 1rem; }
+
+.scan-active {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+}
+.scan-hint { color: #636e72; font-size: 0.9rem; text-align: center; }
+
+.scanner-container {
+  width: 100%;
+  max-width: 360px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #000;
+  aspect-ratio: 1;
+}
+/* Override html5-qrcode internal styles */
+.scanner-container video { width: 100% !important; height: auto !important; }
+#qr-scanner-container { width: 100% !important; }
+
+.scan-result {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px 24px;
+}
+.result-icon { font-size: 4rem; }
+.scan-result h3 { font-size: 1.3rem; font-weight: 700; }
+.result-hint { color: #636e72; font-size: 0.9rem; text-align: center; }
+.error-detail { color: #d63031; text-align: center; font-size: 0.95rem; max-width: 300px; }
+
+.result-card {
+  width: 100%;
+  background: #f8f7ff;
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+}
+.result-row span { color: #636e72; }
+.amount-received { color: #00b894; font-size: 1.2rem; font-weight: 700; }
