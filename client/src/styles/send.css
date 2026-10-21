@@ -156,3 +156,36 @@
   font-family: monospace; text-align: right;
 }
 .loading-hint { text-align: center; color: #636e72; font-size: 0.85rem; }
+
+/* Copy payment data box (desktop testing helper) */
+.copy-payment-box {
+  width: 100%;
+  background: #f0f7ff;
+  border: 1px dashed #90caf9;
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+.copy-payment-label {
+  font-size: 0.82rem;
+  color: #1565c0;
+  text-align: center;
+  margin: 0;
+  line-height: 1.4;
+}
+.btn-copy-payment {
+  padding: 9px 20px;
+  background: #1565c0;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-copy-payment:hover { background: #0d47a1; }
+.btn-copy-payment.copied { background: #00b894; }

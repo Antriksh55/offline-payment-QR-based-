@@ -1,8 +1,10 @@
 /**
  * Receive Page — Module 10 UI + Module 3 (QR Scanning) + Module 4 (local verification)
  *
- * Camera-based QR scanning via html5-qrcode.
- * Verifies signature, checks nonce, writes to local ledger.
+ * TWO ways to receive payment (desktop-friendly):
+ * 1. Camera scan — use on mobile devices
+ * 2. Paste payment data — for desktop testing with two browser tabs
+ *    (sender copies the payment data from Send page, receiver pastes it here)
  */
 
 import { useState, useEffect, useRef } from 'react';
@@ -15,6 +17,7 @@ const SCANNER_ID = 'qr-scanner-container';
 const SCAN_STATE = {
   IDLE: 'idle',
   SCANNING: 'scanning',
+  PASTE: 'paste',
   SUCCESS: 'success',
   ERROR: 'error'
 };
@@ -23,9 +26,10 @@ export default function ReceivePage({ user, onBack }) {
   const [scanState, setScanState] = useState(SCAN_STATE.IDLE);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const [pasteText, setPasteText] = useState('');
+  const [processing, setProcessing] = useState(false);
   const scannerRef = useRef(null);
 
-  // Clean up scanner on unmount
   useEffect(() => {
     return () => {
       if (scannerRef.current) {
@@ -35,6 +39,7 @@ export default function ReceivePage({ user, onBack }) {
     };
   }, []);
 
+  // ── Camera scanner ────────────────────────────────────────────────────────
   async function startScanner() {
     setScanState(SCAN_STATE.SCANNING);
     setError('');
@@ -45,26 +50,22 @@ export default function ReceivePage({ user, onBack }) {
       scannerRef.current = scanner;
 
       await scanner.start(
-        { facingMode: 'environment' }, // rear camera preferred
+        { facingMode: 'environment' },
         { fps: 10, qrbox: { width: 280, height: 280 } },
         async (decodedText) => {
-          // QR successfully decoded
           await scanner.stop();
           scannerRef.current = null;
           await handleScannedPayload(decodedText);
         },
-        (errorMessage) => {
-          // Per-frame scan failure — normal, don't surface to user
-        }
+        () => {} // per-frame failures are normal
       );
     } catch (err) {
-      // Camera permission denied or unavailable
       if (err.name === 'NotAllowedError' || err.message?.includes('permission')) {
-        setError('Camera permission denied. Please allow camera access and try again.');
-      } else if (err.message?.includes('No cameras')) {
-        setError('No camera found on this device.');
+        setError('Camera permission denied. Use "Paste Payment Data" instead for desktop testing.');
+      } else if (err.message?.includes('No cameras') || err.message?.includes('no camera')) {
+        setError('No camera found. Use "Paste Payment Data" instead.');
       } else {
-        setError(`Could not start camera: ${err.message}`);
+        setError(`Camera error: ${err.message}. Try "Paste Payment Data" instead.`);
       }
       setScanState(SCAN_STATE.IDLE);
     }
@@ -78,18 +79,26 @@ export default function ReceivePage({ user, onBack }) {
     setScanState(SCAN_STATE.IDLE);
   }
 
+  // ── Paste handler ─────────────────────────────────────────────────────────
+  async function handlePasteSubmit(e) {
+    e.preventDefault();
+    if (!pasteText.trim()) return;
+    setProcessing(true);
+    await handleScannedPayload(pasteText.trim());
+    setProcessing(false);
+  }
+
+  // ── Core payload processor (shared by camera + paste) ────────────────────
   async function handleScannedPayload(rawText) {
-    // Parse JSON — reject if invalid
     let payload;
     try {
       payload = JSON.parse(rawText);
     } catch {
-      setError('Invalid or corrupted payment code. Please ask the sender to regenerate.');
+      setError('Invalid payment data — not valid JSON. Copy the full payment data from the sender\'s screen.');
       setScanState(SCAN_STATE.ERROR);
       return;
     }
 
-    // Check required fields
     const required = ['txnId', 'senderVpa', 'amount', 'timestamp', 'nonce', 'signature', 'senderPublicKey'];
     const missing = required.filter((f) => payload[f] === undefined || payload[f] === null);
     if (missing.length > 0) {
@@ -98,26 +107,21 @@ export default function ReceivePage({ user, onBack }) {
       return;
     }
 
-    // Reject self-payment
     if (payload.senderVpa === user.vpa) {
-      setError('You cannot pay yourself. This is your own QR code.');
+      setError('You cannot pay yourself. This is your own payment code.');
       setScanState(SCAN_STATE.ERROR);
       return;
     }
 
-    // Set receiverVpa to the current user's VPA before verification
     const enrichedPayload = { ...payload, receiverVpa: user.vpa };
 
-    // Verify + record in local ledger (Module 4)
     try {
       const { success, error: verifyError } = await receiveScannedTransaction(enrichedPayload);
-
       if (!success) {
         setError(verifyError || 'Transaction verification failed');
         setScanState(SCAN_STATE.ERROR);
         return;
       }
-
       setResult(enrichedPayload);
       setScanState(SCAN_STATE.SUCCESS);
     } catch (err) {
@@ -126,49 +130,102 @@ export default function ReceivePage({ user, onBack }) {
     }
   }
 
-  const formatAmount = (p) => `₹${(p / 100).toFixed(2)}`;
+  const fmt = (p) => `₹${(p / 100).toFixed(2)}`;
 
   return (
     <div className="receive-page">
       <header className="page-header">
         <button className="btn-back" onClick={onBack} aria-label="Back">←</button>
-        <h2>Scan to Receive</h2>
+        <h2>Receive Payment</h2>
       </header>
 
-      {/* Idle state */}
+      {/* ── IDLE: choose method ── */}
       {scanState === SCAN_STATE.IDLE && (
         <div className="scan-idle">
-          <div className="scan-icon">📷</div>
-          <p>Scan the sender's QR code to receive a payment.</p>
+          <div className="scan-icon">💸</div>
+          <h3 style={{margin:'0 0 6px'}}>How do you want to receive?</h3>
+          <p style={{color:'#636e72', fontSize:'0.88rem', textAlign:'center', marginBottom:'24px'}}>
+            On mobile: scan the QR code. On desktop: ask the sender to copy payment data and paste it here.
+          </p>
+
           <button className="btn-primary" onClick={startScanner}>
-            Open Camera
+            📷 Scan QR Code (Mobile)
           </button>
+
+          <div className="or-divider">
+            <span>or</span>
+          </div>
+
+          <button className="btn-secondary" onClick={() => { setScanState(SCAN_STATE.PASTE); setError(''); }}>
+            📋 Paste Payment Data (Desktop)
+          </button>
+
+          {error && <div className="error-msg" role="alert" style={{marginTop:'16px'}}>{error}</div>}
         </div>
       )}
 
-      {/* Scanning state */}
+      {/* ── SCANNING ── */}
       {scanState === SCAN_STATE.SCANNING && (
         <div className="scan-active">
           <p className="scan-hint">Point your camera at the payment QR code</p>
-          {/* html5-qrcode renders into this container */}
           <div id={SCANNER_ID} className="scanner-container" />
-          <button className="btn-secondary" onClick={stopScanner}>
-            Cancel
-          </button>
+          <button className="btn-secondary" onClick={stopScanner}>Cancel</button>
         </div>
       )}
 
-      {/* Success state */}
+      {/* ── PASTE mode ── */}
+      {scanState === SCAN_STATE.PASTE && (
+        <div className="paste-mode">
+          <div className="paste-instructions">
+            <h3>Paste Payment Data</h3>
+            <ol>
+              <li>On the <strong>sender's tab</strong>, go to Send → enter amount → enter PIN → QR appears</li>
+              <li>Click <strong>"Copy Payment Data"</strong> button below the QR</li>
+              <li>Come back here and paste it in the box below</li>
+            </ol>
+          </div>
+
+          <form onSubmit={handlePasteSubmit} className="paste-form">
+            <textarea
+              className="paste-textarea"
+              placeholder='Paste payment data here (starts with {"txnId":"...")}'
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              rows={6}
+              aria-label="Payment data"
+            />
+
+            {error && <div className="error-msg" role="alert">{error}</div>}
+
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={!pasteText.trim() || processing}
+            >
+              {processing ? 'Verifying...' : '✓ Verify & Accept Payment'}
+            </button>
+            <button
+              type="button"
+              className="btn-link"
+              onClick={() => { setScanState(SCAN_STATE.IDLE); setPasteText(''); setError(''); }}
+            >
+              ← Back
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* ── SUCCESS ── */}
       {scanState === SCAN_STATE.SUCCESS && result && (
         <div className="scan-result success">
           <div className="result-icon">✅</div>
           <h3>Payment Received!</h3>
-          <p className="result-hint">Saved locally. Sync to confirm on the server.</p>
+          <p className="result-hint">Saved locally. Tap Sync to confirm on the server.</p>
 
           <div className="result-card">
             <div className="result-row">
               <span>Amount</span>
-              <strong className="amount-received">{formatAmount(result.amount)}</strong>
+              <strong className="amount-received">{fmt(result.amount)}</strong>
             </div>
             <div className="result-row">
               <span>From</span>
@@ -180,37 +237,28 @@ export default function ReceivePage({ user, onBack }) {
             </div>
             <div className="result-row">
               <span>Transaction ID</span>
-              <code>{result.txnId.slice(0, 12)}…</code>
+              <code style={{fontSize:'0.72rem', wordBreak:'break-all'}}>{result.txnId}</code>
             </div>
           </div>
 
-          <button className="btn-primary" onClick={() => { setScanState(SCAN_STATE.IDLE); setResult(null); }}>
-            Scan Another
+          <button className="btn-primary" onClick={() => { setScanState(SCAN_STATE.IDLE); setResult(null); setPasteText(''); }}>
+            Receive Another
           </button>
-          <button className="btn-link" onClick={onBack}>
-            Back to Dashboard
-          </button>
+          <button className="btn-link" onClick={onBack}>Back to Dashboard</button>
         </div>
       )}
 
-      {/* Error state */}
+      {/* ── ERROR ── */}
       {scanState === SCAN_STATE.ERROR && (
         <div className="scan-result error">
           <div className="result-icon">❌</div>
-          <h3>Scan Failed</h3>
+          <h3>Payment Failed</h3>
           <p className="error-detail" role="alert">{error}</p>
-          <button className="btn-primary" onClick={() => { setScanState(SCAN_STATE.IDLE); setError(''); }}>
+          <button className="btn-primary" onClick={() => { setScanState(SCAN_STATE.IDLE); setError(''); setPasteText(''); }}>
             Try Again
           </button>
-          <button className="btn-link" onClick={onBack}>
-            Back to Dashboard
-          </button>
+          <button className="btn-link" onClick={onBack}>Back to Dashboard</button>
         </div>
-      )}
-
-      {/* Camera error on scanning state */}
-      {scanState === SCAN_STATE.SCANNING && error && (
-        <div className="error-msg" role="alert">{error}</div>
       )}
     </div>
   );

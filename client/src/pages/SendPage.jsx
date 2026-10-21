@@ -25,6 +25,44 @@ import { getKeypair } from '../identity/keyStore';
 import PinModal from '../components/PinModal';
 import '../styles/send.css';
 
+/** Small helper — copies the raw signed transaction JSON to clipboard */
+function CopyPaymentData({ txn }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(txn));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
+    } catch {
+      // Fallback for browsers without clipboard API
+      const ta = document.createElement('textarea');
+      ta.value = JSON.stringify(txn);
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
+    }
+  }
+
+  return (
+    <div className="copy-payment-box">
+      <p className="copy-payment-label">
+        🖥️ <strong>Desktop testing?</strong> Copy payment data and paste it on the receiver's tab
+      </p>
+      <button
+        type="button"
+        className={`btn-copy-payment ${copied ? 'copied' : ''}`}
+        onClick={handleCopy}
+      >
+        {copied ? '✅ Copied!' : '📋 Copy Payment Data'}
+      </button>
+    </div>
+  );
+}
+
 export default function SendPage({ user, onBack, deviceId }) {
   const [amountRupees, setAmountRupees] = useState('');
   const [qrDataUrl, setQrDataUrl] = useState(null);
@@ -287,6 +325,9 @@ export default function SendPage({ user, onBack, deviceId }) {
           </div>
 
           {error && <div className="error-msg" role="alert">{error}</div>}
+
+          {/* Desktop testing: copy raw payment JSON so receiver can paste it */}
+          <CopyPaymentData txn={signedTxn} />
 
           <button className="btn-primary confirm-btn" onClick={handleConfirmSent}>
             ✓ Receiver Scanned — Confirm Payment

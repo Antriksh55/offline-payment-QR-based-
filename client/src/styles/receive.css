@@ -65,3 +65,66 @@
 }
 .result-row span { color: #636e72; }
 .amount-received { color: #00b894; font-size: 1.2rem; font-weight: 700; }
+
+/* Idle screen */
+.scan-idle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 32px 24px;
+}
+.scan-idle h3 { font-size: 1.1rem; font-weight: 700; }
+
+/* Or divider */
+.or-divider {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  color: #b2bec3;
+  font-size: 0.85rem;
+}
+.or-divider::before,
+.or-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #dfe6e9;
+}
+
+/* Paste mode */
+.paste-mode {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+.paste-instructions {
+  background: #f8f7ff;
+  border-radius: 12px;
+  padding: 16px;
+}
+.paste-instructions h3 { font-size: 1rem; font-weight: 700; margin-bottom: 10px; }
+.paste-instructions ol { padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.paste-instructions li { font-size: 0.85rem; color: #2d3436; line-height: 1.5; }
+
+.paste-form { display: flex; flex-direction: column; gap: 12px; }
+
+.paste-textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 2px solid #dfe6e9;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  font-family: monospace;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.2s;
+  color: #2d3436;
+  background: #fafafa;
+}
+.paste-textarea:focus { border-color: #6c5ce7; background: #fff; }
