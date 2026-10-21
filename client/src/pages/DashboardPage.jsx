@@ -6,17 +6,18 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { computeLocalBalance, getAllLocalTransactions, TXN_STATUS, updateWalletMeta } from '../ledger/localLedger';
+import { computeLocalBalance, getAllLocalTransactions, TXN_STATUS, updateWalletMeta, confirmSentTransaction, cancelSentTransaction } from '../ledger/localLedger';
 import { syncPendingTransactions } from '../sync/syncService';
+import { checkAck, clearAck } from '../transaction/ackService';
 import '../styles/dashboard.css';
 
 const STATUS_LABELS = {
-  [TXN_STATUS.PENDING_SCAN]: { label: 'Awaiting Scan', className: 'status-awaiting', icon: '⏳' },
-  [TXN_STATUS.PENDING_SYNC]: { label: 'Pending',       className: 'status-pending',  icon: '🔄' },
-  [TXN_STATUS.CONFIRMED]:    { label: 'Success',        className: 'status-confirmed', icon: '✅' },
+  [TXN_STATUS.PENDING_SCAN]: { label: 'QR Not Scanned', className: 'status-awaiting', icon: '⏳' },
+  [TXN_STATUS.PENDING_SYNC]: { label: 'Pending Sync',   className: 'status-pending',  icon: '🔄' },
+  [TXN_STATUS.CONFIRMED]:    { label: 'Success',         className: 'status-confirmed', icon: '✅' },
   [TXN_STATUS.REJECTED_DOUBLE_SPEND]: { label: 'Failed', className: 'status-rejected', icon: '❌' },
-  [TXN_STATUS.REJECTED]:     { label: 'Rejected',       className: 'status-rejected', icon: '❌' },
-  [TXN_STATUS.CANCELLED]:    { label: 'Cancelled',      className: 'status-cancelled', icon: '🚫' }
+  [TXN_STATUS.REJECTED]:     { label: 'Rejected',        className: 'status-rejected', icon: '❌' },
+  [TXN_STATUS.CANCELLED]:    { label: 'Cancelled',       className: 'status-cancelled', icon: '🚫' }
 };
 
 /** Format timestamp → "19 Oct 2026, 4:30 PM" */
@@ -44,6 +45,7 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [expandedTxn, setExpandedTxn] = useState(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
+  const [cancellingTxn, setCancellingTxn] = useState(null); // txnId being cancelled
 
   // Track online/offline status in real time
   useEffect(() => {
@@ -95,16 +97,56 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
   const refreshTransactions = useCallback(async () => {
     try {
       const txns = await getAllLocalTransactions();
-      setTransactions(txns);
+
+      // For any PENDING_SCAN sent transaction, check if an ack has arrived.
+      // This handles the case where the ack came in while the user was away
+      // from the SendPage (polling stopped) — we catch it here on dashboard load.
+      const pendingScanSent = txns.filter(
+        (t) => t.direction === 'sent' && t.status === TXN_STATUS.PENDING_SCAN
+      );
+
+      let needsRefresh = false;
+      for (const txn of pendingScanSent) {
+        const ack = await checkAck(txn.txnId, user?.token || '');
+        if (ack?.status === 'accepted') {
+          await confirmSentTransaction(txn.txnId);
+          clearAck(txn.txnId);
+          needsRefresh = true;
+        } else if (ack?.status === 'rejected') {
+          await cancelSentTransaction(txn.txnId);
+          clearAck(txn.txnId);
+          needsRefresh = true;
+        }
+      }
+
+      // Re-fetch if any statuses changed
+      const finalTxns = needsRefresh ? await getAllLocalTransactions() : txns;
+      setTransactions(finalTxns);
+      if (needsRefresh) {
+        const { balance: bal, pendingCount: pc } = await computeLocalBalance();
+        setBalance(bal);
+        setPendingCount(pc);
+      }
     } catch (err) {
       console.error('Txn list error:', err);
     }
-  }, []);
+  }, [user?.token]);
 
   useEffect(() => {
     refreshBalance();
     refreshTransactions();
   }, [refreshBalance, refreshTransactions]);
+
+  async function handleCancelPendingScan(txnId) {
+    setCancellingTxn(txnId);
+    try {
+      await cancelSentTransaction(txnId);
+      await refreshTransactions();
+      await refreshBalance();
+    } finally {
+      setCancellingTxn(null);
+    }
+  }
 
   const handleSync = async () => {
     if (!isOnline) {
@@ -285,6 +327,16 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
                         <span>Reason</span>
                         <span>{txn.rejectionReason}</span>
                       </div>
+                    )}
+                    {/* Inline cancel for unscanned QRs */}
+                    {isPendingScan && isSent && (
+                      <button
+                        className="btn-cancel-inline"
+                        onClick={() => handleCancelPendingScan(txn.txnId)}
+                        disabled={cancellingTxn === txn.txnId}
+                      >
+                        {cancellingTxn === txn.txnId ? 'Cancelling…' : '✕ Cancel this payment'}
+                      </button>
                     )}
                     {isDoubleSpend && (
                       <div className="double-spend-warning" role="alert">
