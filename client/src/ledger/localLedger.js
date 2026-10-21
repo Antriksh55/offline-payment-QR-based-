@@ -94,8 +94,13 @@ export async function cancelSentTransaction(txnId) {
 export async function receiveScannedTransaction(scannedPayload) {
   const db = await openDB();
 
-  // Step 1: Verify signature
-  const { valid, error: sigError } = verifyTransaction(scannedPayload);
+  // Step 1: Verify signature.
+  // The sender signed with receiverVpa='' (empty) — that is what we verify against.
+  // The scannedPayload may already have receiverVpa set to the current user's VPA
+  // (set by ReceivePage before calling this function), so we pass the original
+  // signed version (receiverVpa='') to verifyTransaction.
+  const payloadForVerify = { ...scannedPayload, receiverVpa: '' };
+  const { valid, error: sigError } = verifyTransaction(payloadForVerify);
   if (!valid) {
     return { success: false, error: sigError || 'Invalid signature' };
   }

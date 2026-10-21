@@ -100,7 +100,7 @@ export function buildSignedTransaction({ senderVpa, amount, privateKeyB64, publi
  */
 export function verifyTransaction(txn) {
   try {
-    const { signature, senderPublicKey, ...rest } = txn;
+    const { signature, senderPublicKey } = txn;
 
     if (!signature || !senderPublicKey) {
       return { valid: false, error: 'Missing signature or public key' };
@@ -112,7 +112,13 @@ export function verifyTransaction(txn) {
       return { valid: false, error: 'Transaction has expired or timestamp is too far in the future' };
     }
 
-    const canonical = buildCanonicalMessage(txn);
+    // IMPORTANT: Verify against the ORIGINAL signed message.
+    // The sender signed with receiverVpa='' (empty) because the receiver VPA
+    // is not known at signing time. The receiver fills in their VPA AFTER
+    // verification — not before. We must verify over the empty receiverVpa
+    // exactly as it was when the sender signed.
+    const originalTxn = { ...txn, receiverVpa: txn.originalReceiverVpa ?? '' };
+    const canonical = buildCanonicalMessage(originalTxn);
     const msgBytes = new TextEncoder().encode(canonical);
     const sigBytes = decodeBase64(signature);
     const pubKeyBytes = decodeBase64(senderPublicKey);

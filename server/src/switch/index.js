@@ -107,8 +107,12 @@ async function processSingle(txn, floatDeviceId = null) {
     };
   }
 
-  // Now verify the actual signature against the registered (= same) key
-  const canonical = buildCanonicalMessage(txn);
+  // Now verify the actual signature against the registered (= same) key.
+  // The sender signed with receiverVpa='' (empty string) — the receiver VPA
+  // is filled in after scanning, not at signing time. So we verify against
+  // the original signed message with receiverVpa=''.
+  const txnForVerify = { ...txn, receiverVpa: '' };
+  const canonical = buildCanonicalMessage(txnForVerify);
   let sigValid = false;
   try {
     const sigBytes = decodeBase64(signature);
