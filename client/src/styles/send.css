@@ -189,3 +189,28 @@
 }
 .btn-copy-payment:hover { background: #0d47a1; }
 .btn-copy-payment.copied { background: #00b894; }
+
+/* Ack waiting state */
+.ack-waiting-note {
+  width: 100%;
+  background: #f8f7ff;
+  border: 1px solid #a29bfe;
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 0.8rem;
+  color: #6c5ce7;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.ack-pulse {
+  display: inline-block;
+  color: #6c5ce7;
+  animation: pulse 1.2s ease-in-out infinite;
+  margin-right: 6px;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}

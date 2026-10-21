@@ -18,6 +18,7 @@ const cron = require('node-cron');
 const authRoutes = require('./routes/auth');
 const syncRoutes = require('./routes/sync');
 const balanceRoutes = require('./routes/balance');
+const ackRoutes = require('./routes/ack');
 const settlementRoutes = require('./routes/settlement');
 const floatRoutes = require('./routes/float');
 const bankRoutes = require('./routes/banks');
@@ -39,7 +40,8 @@ app.use(express.json({ limit: '2mb' }));
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/sync', syncRoutes);
-app.use('/api/balance', balanceRoutes);   // GET /api/balance/:vpa — correct path
+app.use('/api/balance', balanceRoutes);
+app.use('/api/ack', ackRoutes);
 app.use('/api/settlement', settlementRoutes);
 app.use('/api/float', floatRoutes);
 app.use('/api/banks', bankRoutes);

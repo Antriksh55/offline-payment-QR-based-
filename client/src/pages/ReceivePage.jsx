@@ -10,6 +10,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { receiveScannedTransaction } from '../ledger/localLedger';
+import { writeAck } from '../transaction/ackService';
 import '../styles/receive.css';
 
 const SCANNER_ID = 'qr-scanner-container';
@@ -118,10 +119,14 @@ export default function ReceivePage({ user, onBack }) {
     try {
       const { success, error: verifyError } = await receiveScannedTransaction(enrichedPayload);
       if (!success) {
+        // Write a rejected ack so sender knows
+        await writeAck(enrichedPayload.txnId, user.vpa, 'rejected', verifyError, user.token);
         setError(verifyError || 'Transaction verification failed');
         setScanState(SCAN_STATE.ERROR);
         return;
       }
+      // Write accepted ack — this is what moves the sender's PENDING_SCAN → PENDING_SYNC
+      await writeAck(enrichedPayload.txnId, user.vpa, 'accepted', '', user.token);
       setResult(enrichedPayload);
       setScanState(SCAN_STATE.SUCCESS);
     } catch (err) {

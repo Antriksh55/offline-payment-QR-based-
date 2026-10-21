@@ -2,15 +2,22 @@
  * Send Page — Module 10 UI + Module 3 (QR Generation)
  *
  * Flow:
- *   1. Enter amount → tap Generate
- *   2. ── UPI PIN modal (verified offline via SHA-256 in IndexedDB) ──
- *   3. On PIN success → build signed transaction, record as PENDING_SCAN (balance unchanged)
- *   4. QR displayed → receiver scans → sender taps "Confirm Payment"
- *   5. Status → PENDING_SYNC, balance deducted
- *   6. OR sender taps "Cancel" → CANCELLED, balance unchanged
+ *   1. Enter amount → UPI PIN modal
+ *   2. PIN verified → build signed transaction, record as PENDING_SCAN (balance unchanged)
+ *   3. QR displayed + Copy Payment Data button shown
+ *   4. Sender waits — the page POLLS for a receiver acknowledgement every 3 seconds
+ *      via localStorage (same browser) and server /api/ack (cross-device)
+ *   5. When receiver scans/pastes and accepts:
+ *      - Receiver writes ack (localStorage + server)
+ *      - Sender's polling detects it → automatically moves to PENDING_SYNC
+ *      - Balance deducted, success screen shown — NO manual sender confirmation needed
+ *   6. If receiver rejects → shows rejection reason
+ *   7. Sender can cancel (before ack) → CANCELLED, balance unchanged
+ *
+ * The sender can NEVER self-confirm. Only a receiver ack triggers PENDING_SYNC.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { buildSignedTransaction, validateAmount } from '../transaction/builder';
 import { generateQRCode } from '../qr/qrGenerator';
 import {
@@ -22,29 +29,29 @@ import {
   updateWalletMeta
 } from '../ledger/localLedger';
 import { getKeypair } from '../identity/keyStore';
+import { checkAck, clearAck } from '../transaction/ackService';
 import PinModal from '../components/PinModal';
 import '../styles/send.css';
 
-/** Small helper — copies the raw signed transaction JSON to clipboard */
+const POLL_INTERVAL_MS = 2500; // poll every 2.5 seconds
+
+/** Copies the raw signed transaction JSON to clipboard */
 function CopyPaymentData({ txn }) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(JSON.stringify(txn));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 3000);
     } catch {
-      // Fallback for browsers without clipboard API
       const ta = document.createElement('textarea');
       ta.value = JSON.stringify(txn);
       document.body.appendChild(ta);
       ta.select();
       document.execCommand('copy');
       document.body.removeChild(ta);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 3000);
     }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 3000);
   }
 
   return (
@@ -72,23 +79,56 @@ export default function SendPage({ user, onBack, deviceId }) {
   const [loading, setLoading] = useState(false);
   const [balance, setBalance] = useState(0);
   const [floatMeta, setFloatMeta] = useState(null);
-  const [confirmed, setConfirmed] = useState(false);
-  // PIN modal state
   const [showPinModal, setShowPinModal] = useState(false);
-  const [pendingPaise, setPendingPaise] = useState(null); // amount waiting for PIN
+  const [pendingPaise, setPendingPaise] = useState(null);
+  // ack states
+  const [ackStatus, setAckStatus] = useState(null); // null | 'waiting' | 'accepted' | 'rejected'
+  const [ackReceiver, setAckReceiver] = useState('');
+  const pollRef = useRef(null);
 
   useEffect(() => {
     computeLocalBalance().then(({ balance: b }) => setBalance(b));
     getWalletMeta().then((meta) => setFloatMeta(meta));
   }, []);
 
-  // ── Step 1: Validate amount, then show PIN modal ───────────────────────────
+  // Start polling when QR is shown
+  useEffect(() => {
+    if (!signedTxn || ackStatus === 'accepted' || ackStatus === 'rejected') return;
+
+    setAckStatus('waiting');
+
+    pollRef.current = setInterval(async () => {
+      const ack = await checkAck(signedTxn.txnId, user.token);
+      if (!ack) return;
+
+      clearInterval(pollRef.current);
+
+      if (ack.status === 'accepted') {
+        // Receiver accepted — automatically confirm on sender side
+        await confirmSentTransaction(signedTxn.txnId);
+        const { balance: newBal } = await computeLocalBalance();
+        setBalance(newBal);
+        setAckReceiver(ack.receiverVpa);
+        setAckStatus('accepted');
+        clearAck(signedTxn.txnId);
+      } else {
+        // Receiver rejected
+        setAckStatus('rejected');
+        setError(ack.reason || 'Payment was declined by the receiver');
+        clearAck(signedTxn.txnId);
+      }
+    }, POLL_INTERVAL_MS);
+
+    return () => clearInterval(pollRef.current);
+  }, [signedTxn?.txnId]);
+
+  // ── Step 1: Validate → PIN modal ─────────────────────────────────────────
   async function handleGenerate(e) {
     e.preventDefault();
     setError('');
     setWarning('');
     setQrDataUrl(null);
-    setConfirmed(false);
+    setAckStatus(null);
 
     const paise = Math.round(parseFloat(amountRupees) * 100);
     if (isNaN(paise)) { setError('Please enter a valid amount'); return; }
@@ -97,14 +137,12 @@ export default function SendPage({ user, onBack, deviceId }) {
     if (validationResult) {
       if (validationResult.startsWith('__WARN__:')) {
         setWarning(validationResult.replace('__WARN__:', ''));
-        // non-blocking — fall through to PIN
       } else {
         setError(validationResult);
         return;
       }
     }
 
-    // Offline float guard
     if (floatMeta?.floatReservedAmount && floatMeta?.floatExpiresAt) {
       const expiresAt = new Date(floatMeta.floatExpiresAt);
       const spentSoFar = floatMeta.floatSpentOffline || 0;
@@ -113,20 +151,16 @@ export default function SendPage({ user, onBack, deviceId }) {
         return;
       }
       if (spentSoFar + paise > floatMeta.floatReservedAmount) {
-        setError(
-          `Offline spending limit reached (₹${(floatMeta.floatReservedAmount / 100).toFixed(2)} total). ` +
-          `Reconnect to refresh your limit.`
-        );
+        setError(`Offline spending limit reached (₹${(floatMeta.floatReservedAmount / 100).toFixed(2)} total). Reconnect to refresh.`);
         return;
       }
     }
 
-    // Store the validated amount and show the PIN modal
     setPendingPaise(paise);
     setShowPinModal(true);
   }
 
-  // ── Step 2: PIN verified → actually build & record transaction ─────────────
+  // ── Step 2: PIN verified → build transaction ──────────────────────────────
   async function handlePinSuccess() {
     setShowPinModal(false);
     setLoading(true);
@@ -138,13 +172,10 @@ export default function SendPage({ user, onBack, deviceId }) {
       let deviceSeq = undefined;
       if (floatMeta?.floatNextSeq !== undefined) {
         deviceSeq = floatMeta.floatNextSeq;
-        // NOTE: We update floatNextSeq and floatSpentOffline here optimistically.
-        // If the user later cancels, handleCancel() will roll these back.
         await updateWalletMeta({
           floatNextSeq: deviceSeq + 1,
           floatSpentOffline: (floatMeta.floatSpentOffline || 0) + pendingPaise
         });
-        // Keep a snapshot so cancel can roll back precisely
         setFloatMeta((prev) => ({
           ...prev,
           floatNextSeq: deviceSeq + 1,
@@ -163,9 +194,7 @@ export default function SendPage({ user, onBack, deviceId }) {
         deviceSeq
       });
 
-      // Record as PENDING_SCAN — balance NOT yet affected
       await recordSentTransaction(txn);
-
       const dataUrl = await generateQRCode(txn);
       setQrDataUrl(dataUrl);
       setSignedTxn(txn);
@@ -181,23 +210,11 @@ export default function SendPage({ user, onBack, deviceId }) {
     setPendingPaise(null);
   }
 
-  // ── Confirm: receiver scanned → PENDING_SYNC (balance deducted now) ─────────
-  async function handleConfirmSent() {
-    try {
-      await confirmSentTransaction(signedTxn.txnId);
-      setConfirmed(true);
-      const { balance: newBal } = await computeLocalBalance();
-      setBalance(newBal);
-    } catch (err) {
-      setError(`Failed to confirm: ${err.message}`);
-    }
-  }
-
-  // ── Cancel: QR not scanned → CANCELLED, balance unchanged ─────────────────
+  // ── Cancel: before ack arrives ────────────────────────────────────────────
   async function handleCancel() {
+    clearInterval(pollRef.current);
     if (signedTxn) await cancelSentTransaction(signedTxn.txnId);
 
-    // Roll back floatSpentOffline and floatNextSeq if they were incremented
     if (floatMeta?._preGenerateSeq !== undefined) {
       await updateWalletMeta({
         floatNextSeq: floatMeta._preGenerateSeq,
@@ -210,9 +227,8 @@ export default function SendPage({ user, onBack, deviceId }) {
     setAmountRupees('');
     setError('');
     setWarning('');
-    setConfirmed(false);
+    setAckStatus(null);
     setPendingPaise(null);
-    // Re-read fresh meta so floatMeta state is correct
     const freshMeta = await getWalletMeta();
     setFloatMeta(freshMeta);
     const { balance: newBal } = await computeLocalBalance();
@@ -220,21 +236,23 @@ export default function SendPage({ user, onBack, deviceId }) {
   }
 
   async function handleNewTransaction() {
+    clearInterval(pollRef.current);
     setQrDataUrl(null);
     setSignedTxn(null);
     setAmountRupees('');
     setError('');
     setWarning('');
-    setConfirmed(false);
+    setAckStatus(null);
     const { balance: newBal } = await computeLocalBalance();
     setBalance(newBal);
   }
 
   const fmt = (p) => `₹${(p / 100).toFixed(2)}`;
+  const isAccepted = ackStatus === 'accepted';
+  const isRejected = ackStatus === 'rejected';
 
   return (
     <div className="send-page">
-      {/* PIN Modal — shown before every payment, verified offline */}
       {showPinModal && (
         <PinModal
           amountDisplay={pendingPaise ? fmt(pendingPaise) : ''}
@@ -246,7 +264,7 @@ export default function SendPage({ user, onBack, deviceId }) {
       <header className="page-header">
         <button
           className="btn-back"
-          onClick={signedTxn && !confirmed ? handleCancel : onBack}
+          onClick={signedTxn && !isAccepted ? handleCancel : onBack}
           aria-label="Back"
         >←</button>
         <h2>Send Money</h2>
@@ -255,9 +273,7 @@ export default function SendPage({ user, onBack, deviceId }) {
       {/* ── Step 1: Amount entry ── */}
       {!qrDataUrl && (
         <form onSubmit={handleGenerate} className="send-form">
-          <div className="balance-hint">
-            Balance: <strong>{fmt(balance)}</strong>
-          </div>
+          <div className="balance-hint">Balance: <strong>{fmt(balance)}</strong></div>
 
           {floatMeta?.floatReservedAmount && (
             <div className="float-info">
@@ -290,11 +306,12 @@ export default function SendPage({ user, onBack, deviceId }) {
         </form>
       )}
 
-      {/* ── Step 2: QR display ── */}
-      {qrDataUrl && !confirmed && (
+      {/* ── Step 2: QR waiting for receiver ── */}
+      {qrDataUrl && !isAccepted && !isRejected && (
         <div className="qr-display">
           <div className="qr-status-banner pending">
-            📱 Show this QR to the recipient — valid for <strong>5 minutes</strong>
+            <span className="ack-pulse">●</span>
+            Waiting for receiver to scan — valid for <strong>5 minutes</strong>
           </div>
 
           <div className="qr-container">
@@ -320,32 +337,28 @@ export default function SendPage({ user, onBack, deviceId }) {
             </div>
             <div className="summary-row">
               <span>Status</span>
-              <span className="status-tag pending-scan">Waiting for scan…</span>
+              <span className="status-tag pending-scan">⏳ Waiting for receiver…</span>
             </div>
           </div>
 
-          {error && <div className="error-msg" role="alert">{error}</div>}
-
-          {/* Desktop testing: copy raw payment JSON so receiver can paste it */}
           <CopyPaymentData txn={signedTxn} />
 
-          <button className="btn-primary confirm-btn" onClick={handleConfirmSent}>
-            ✓ Receiver Scanned — Confirm Payment
-          </button>
+          <div className="ack-waiting-note">
+            Payment will be confirmed automatically once the receiver accepts it.
+            <br/>You cannot self-confirm — only the receiver's scan/paste triggers confirmation.
+          </div>
+
           <button className="btn-cancel" onClick={handleCancel}>
-            ✕ Cancel — Receiver Didn't Scan
+            ✕ Cancel Payment
           </button>
-          <p className="cancel-hint">
-            Your balance won't change until you tap "Confirm Payment".
-          </p>
         </div>
       )}
 
-      {/* ── Step 3: Confirmed ── */}
-      {qrDataUrl && confirmed && (
+      {/* ── Step 3a: Receiver accepted ── */}
+      {isAccepted && (
         <div className="qr-display">
           <div className="qr-status-banner success">
-            ✅ Payment recorded — sync when online to confirm on the server
+            ✅ Receiver accepted the payment — syncing when online
           </div>
 
           <div className="txn-summary">
@@ -355,7 +368,7 @@ export default function SendPage({ user, onBack, deviceId }) {
             </div>
             <div className="summary-row">
               <span>To</span>
-              <strong>{signedTxn.receiverVpa || '(receiver VPA pending)'}</strong>
+              <strong>{ackReceiver}</strong>
             </div>
             <div className="summary-row">
               <span>Transaction ID</span>
@@ -371,16 +384,24 @@ export default function SendPage({ user, onBack, deviceId }) {
             </div>
             <div className="summary-row">
               <span>Status</span>
-              <span className="status-tag pending-sync">Pending Sync</span>
+              <span className="status-tag pending-sync">🔄 Pending Sync</span>
             </div>
           </div>
 
-          <button className="btn-secondary" onClick={handleNewTransaction}>
-            Send Another
-          </button>
-          <button className="btn-link" onClick={onBack}>
-            Back to Dashboard
-          </button>
+          <button className="btn-secondary" onClick={handleNewTransaction}>Send Another</button>
+          <button className="btn-link" onClick={onBack}>Back to Dashboard</button>
+        </div>
+      )}
+
+      {/* ── Step 3b: Receiver rejected ── */}
+      {isRejected && (
+        <div className="qr-display">
+          <div className="qr-status-banner" style={{background:'#fff0f0', color:'#d63031', border:'1px solid #ffb3b3'}}>
+            ❌ Payment declined by receiver
+          </div>
+          {error && <div className="error-msg" role="alert">{error}</div>}
+          <button className="btn-secondary" onClick={handleNewTransaction}>Try Again</button>
+          <button className="btn-link" onClick={onBack}>Back to Dashboard</button>
         </div>
       )}
     </div>
