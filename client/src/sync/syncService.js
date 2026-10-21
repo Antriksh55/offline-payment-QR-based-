@@ -31,19 +31,36 @@ export async function syncPendingTransactions(token, vpa, deviceId) {
 
   // Extract raw payloads — filter out any with empty receiverVpa.
   // A sent transaction has receiverVpa='' until the receiver scans it;
-  // confirmSentTransaction() is supposed to set it before status moves to PENDING_SYNC,
-  // but guard here as a backstop to prevent the server rejecting the whole batch.
-  const validPayloads = pending
-    .map((t) => t.rawPayload)
-    .filter((p) => p && p.txnId && p.senderVpa && p.receiverVpa && p.amount && p.nonce);
+  // If such a transaction somehow ended up as PENDING_SYNC (sender confirmed
+  // before receiver actually scanned), revert it to PENDING_SCAN so it doesn't
+  // stay stuck as "Pending" forever.
+  const validPending = [];
+  const invalidPending = [];
 
-  const skipped = pending.length - validPayloads.length;
-  if (skipped > 0) {
-    console.warn(`[Sync] Skipped ${skipped} transaction(s) with missing required fields`);
+  for (const t of pending) {
+    const p = t.rawPayload;
+    if (p && p.txnId && p.senderVpa && p.receiverVpa && p.amount && p.nonce) {
+      validPending.push(t);
+    } else {
+      invalidPending.push(t);
+    }
   }
 
+  // Revert invalid transactions back to PENDING_SCAN — they can't be synced
+  // without a receiverVpa, and they shouldn't count as pending balance either
+  for (const t of invalidPending) {
+    await updateTransactionStatus(
+      t.txnId,
+      TXN_STATUS.PENDING_SCAN,
+      'Reverted: no receiver VPA — QR was not scanned'
+    );
+    console.warn(`[Sync] Reverted txn ${t.txnId} to PENDING_SCAN (missing receiverVpa)`);
+  }
+
+  const validPayloads = validPending.map((t) => t.rawPayload);
+
   if (validPayloads.length === 0) {
-    return { synced: 0, results: [], newBalance: null, skipped };
+    return { synced: 0, results: [], newBalance: null };
   }
 
   const meta = await getWalletMeta();
@@ -118,7 +135,7 @@ export async function syncPendingTransactions(token, vpa, deviceId) {
     // Balance fetch failing is non-fatal — local computation still works
   }
 
-  return { synced: validPayloads.length, results, newBalance };
+  return { synced: validPending.length, results, newBalance };
 }
 
 /**

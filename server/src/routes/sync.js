@@ -54,9 +54,8 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ── GET /api/balance/:vpa ────────────────────────────────────────────────────
-// Returns authoritative server-side balance. Client calls this after sync
-// to reconcile its locally-cached lastSyncedBalance.
+// ── GET /api/sync/balance/:vpa (kept for backward compat) ───────────────────
+// Primary balance endpoint is now GET /api/balance/:vpa (see routes/balance.js)
 router.get('/balance/:vpa', async (req, res) => {
   try {
     const { vpa } = req.params;
