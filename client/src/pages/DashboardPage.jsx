@@ -5,7 +5,7 @@
  * sync button, online/offline indicator, and reconciliation status.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { computeLocalBalance, getAllLocalTransactions, TXN_STATUS, updateWalletMeta, confirmSentTransaction, cancelSentTransaction } from '../ledger/localLedger';
 import { syncPendingTransactions } from '../sync/syncService';
 import { checkAck, clearAck } from '../transaction/ackService';
@@ -42,22 +42,49 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
   const [syncMessage, setSyncMessage] = useState(null);
   const [syncError, setSyncError] = useState(null);
   const [serverBalance, setServerBalance] = useState(null);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  // null = checking, true = online, false = offline
+  const [isOnline, setIsOnline] = useState(null);
   const [expandedTxn, setExpandedTxn] = useState(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
-  const [cancellingTxn, setCancellingTxn] = useState(null); // txnId being cancelled
+  const [cancellingTxn, setCancellingTxn] = useState(null);
 
-  // Track online/offline status in real time
-  useEffect(() => {
-    const goOnline = () => setIsOnline(true);
-    const goOffline = () => setIsOnline(false);
-    window.addEventListener('online', goOnline);
-    window.addEventListener('offline', goOffline);
-    return () => {
-      window.removeEventListener('online', goOnline);
-      window.removeEventListener('offline', goOffline);
-    };
+  // ── Real connectivity check ─────────────────────────────────────────────
+  // navigator.onLine is unreliable (reports OS network, not actual server reachability).
+  // We ping GET /api/health and check the response instead.
+  // Runs on mount and every 10 seconds. Switches to fast 3s retry when offline.
+  const connectivityRef = useRef(null);
+
+  const checkConnectivity = useCallback(async () => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000); // 3s timeout
+      const res = await fetch('/api/health', {
+        method: 'GET',
+        signal: controller.signal,
+        cache: 'no-store'
+      });
+      clearTimeout(timeout);
+      setIsOnline(res.ok);
+    } catch {
+      setIsOnline(false);
+    }
   }, []);
+
+  useEffect(() => {
+    // Check immediately on mount
+    checkConnectivity();
+
+    // Then poll — 10s when online, 5s when offline for faster recovery detection
+    const schedule = () => {
+      connectivityRef.current = setTimeout(async () => {
+        await checkConnectivity();
+        schedule();
+      }, isOnline === false ? 5000 : 10000);
+    };
+    schedule();
+
+    return () => clearTimeout(connectivityRef.current);
+  }, [isOnline, checkConnectivity]);
 
   const refreshBalance = useCallback(async () => {
     setBalanceLoading(true);
@@ -149,8 +176,8 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
   }
 
   const handleSync = async () => {
-    if (!isOnline) {
-      setSyncError('You are offline. Transactions are saved locally and will sync when you reconnect.');
+    if (isOnline === false) {
+      setSyncError('You are offline — server is unreachable. Transactions are saved locally.');
       return;
     }
     setSyncing(true);
@@ -194,8 +221,8 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
           </div>
         </div>
         <div className="header-right">
-          <span className={`online-badge ${isOnline ? 'online' : 'offline'}`}>
-            {isOnline ? '● Online' : '● Offline'}
+          <span className={`online-badge ${isOnline === null ? 'checking' : isOnline ? 'online' : 'offline'}`}>
+            {isOnline === null ? '◌ Checking…' : isOnline ? '● Online' : '● Offline'}
           </span>
           <button className="btn-icon" onClick={onLogout} aria-label="Logout" title="Logout">⏻</button>
         </div>
@@ -217,9 +244,9 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
             Server-confirmed: {fmt(serverBalance)}
           </div>
         )}
-        {!isOnline && (
+        {isOnline === false && (
           <div className="offline-note">
-            📴 Offline mode — payments work, sync when reconnected
+            📴 Offline — payments work locally, sync when reconnected
           </div>
         )}
       </div>
