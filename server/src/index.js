@@ -49,9 +49,10 @@ app.use('/api/transactions', transactionRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    dbState: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+  const dbConnected = mongoose.connection.readyState === 1;
+  res.status(dbConnected ? 200 : 503).json({
+    status: dbConnected ? 'ok' : 'degraded',
+    dbState: dbConnected ? 'connected' : 'disconnected',
     time: new Date().toISOString()
   });
 });
@@ -63,6 +64,15 @@ async function connectDB() {
       serverSelectionTimeoutMS: 5000
     });
     console.log('✅ MongoDB connected:', MONGODB_URI);
+
+    // Auto-reconnect on disconnect
+    mongoose.connection.on('disconnected', () => {
+      console.warn('⚠️  MongoDB disconnected — retrying in 5s…');
+      setTimeout(() => mongoose.connect(MONGODB_URI).catch(() => {}), 5000);
+    });
+    mongoose.connection.on('reconnected', () => {
+      console.log('✅ MongoDB reconnected');
+    });
 
     // Seed the two fake banks if they don't exist
     await seedBanks();
