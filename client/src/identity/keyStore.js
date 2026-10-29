@@ -60,8 +60,29 @@ function openDB() {
       }
     };
 
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+
+      // Reset the cached promise if the connection closes unexpectedly
+      // (happens on version upgrade or browser-initiated close).
+      // Without this, the stale closed connection stays cached and every
+      // subsequent IDB call throws "The database connection is closing."
+      db.onclose = () => { dbPromise = null; };
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+
+      resolve(db);
+    };
+    request.onerror = () => {
+      dbPromise = null; // allow retry on next call
+      reject(request.error);
+    };
+    request.onblocked = () => {
+      // Another tab has the DB open at an older version — close ours when possible
+      console.warn('[IDB] Upgrade blocked by another tab. Please close other tabs and reload.');
+    };
   });
 
   return dbPromise;
