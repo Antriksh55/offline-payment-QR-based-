@@ -272,17 +272,22 @@ export async function computeLocalBalance() {
   let pendingCount = 0;
 
   for (const txn of transactions) {
-    // Only count pending_sync and confirmed — skip rejected, cancelled, and pending_scan.
-    // PENDING_SCAN means QR was generated but receiver hasn't scanned yet —
-    // the money has NOT left the sender's wallet until the QR is scanned.
+    // Balance = lastSyncedBalance (from server, already includes all CONFIRMED debits/credits)
+    //         + delta from PENDING_SYNC entries (not yet on the server)
+    //
+    // CONFIRMED entries are already baked into lastSyncedBalance — do NOT count them again
+    // or the balance will be double-deducted (once via lastSyncedBalance, once here).
+    // PENDING_SCAN, CANCELLED, REJECTED — no money moved, skip.
     if (
       txn.status === TXN_STATUS.REJECTED ||
       txn.status === TXN_STATUS.REJECTED_DOUBLE_SPEND ||
       txn.status === TXN_STATUS.CANCELLED ||
-      txn.status === TXN_STATUS.PENDING_SCAN
+      txn.status === TXN_STATUS.PENDING_SCAN ||
+      txn.status === TXN_STATUS.CONFIRMED  // already in lastSyncedBalance
     ) {
       continue;
     }
+    // Only PENDING_SYNC reaches here
     if (txn.direction === 'received') {
       localDelta += txn.amount;
     } else if (txn.direction === 'sent') {

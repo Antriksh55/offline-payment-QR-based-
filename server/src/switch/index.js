@@ -139,16 +139,14 @@ async function processSingle(txn, floatDeviceId = null) {
     return { txnId, respCode: '05', status: 'REJECTED', message: 'Transaction already processed' };
   }
 
-  // ── STEP 4: Timestamp validity ──────────────────────────────────────────────
-  const now = Date.now();
-  if (Math.abs(now - timestamp) > TIMESTAMP_TOLERANCE_MS) {
-    return {
-      txnId,
-      respCode: '08',
-      status: 'REJECTED',
-      message: 'Transaction timestamp outside valid window (±5 minutes)'
-    };
-  }
+  // ── STEP 4: Timestamp validity (client-side only) ──────────────────────────
+  // NOTE: We intentionally skip the timestamp check here on the server Switch.
+  // The 5-minute window is enforced on the RECEIVER side (client) when they
+  // first scan/paste the QR — that is the correct security boundary for offline
+  // payments. By the time sync runs, the transaction may legitimately be older
+  // than 5 minutes (user was offline, receiver accepted, then synced later).
+  // Rejecting valid already-accepted payments due to server-side clock skew
+  // would break the core offline-payment guarantee.
 
   // ── STEP 5: Balance / float check ──────────────────────────────────────────
   const senderAccount = senderEntry.accountNumber;
