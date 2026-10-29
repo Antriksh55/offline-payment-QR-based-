@@ -127,15 +127,24 @@ async function processSingle(txn, floatDeviceId = null) {
     return { txnId, respCode: '04', status: 'REJECTED', message: 'Invalid signature' };
   }
 
-  // ── STEP 3: Nonce replay check ──────────────────────────────────────────────
+  // ── STEP 3: Nonce replay / already processed check ─────────────────────────
   const existingByNonce = await Transaction.findOne({ nonce });
   if (existingByNonce) {
+    // If it was previously SETTLED or PENDING_SETTLEMENT, this is NOT a rejection —
+    // the other party (sender) already synced it successfully. Return 00 so the
+    // receiver's local entry also moves to CONFIRMED instead of showing "Rejected".
+    if (['PENDING_SETTLEMENT', 'SETTLED'].includes(existingByNonce.status)) {
+      return { txnId, respCode: '00', status: 'PENDING_SETTLEMENT', message: 'Already processed successfully' };
+    }
     return { txnId, respCode: '05', status: 'REJECTED', message: 'Nonce replay detected' };
   }
 
   // Also check txnId uniqueness
   const existingByTxnId = await Transaction.findOne({ txnId });
   if (existingByTxnId) {
+    if (['PENDING_SETTLEMENT', 'SETTLED'].includes(existingByTxnId.status)) {
+      return { txnId, respCode: '00', status: 'PENDING_SETTLEMENT', message: 'Already processed successfully' };
+    }
     return { txnId, respCode: '05', status: 'REJECTED', message: 'Transaction already processed' };
   }
 
