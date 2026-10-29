@@ -136,7 +136,7 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
       for (const txn of pendingScanSent) {
         const ack = await checkAck(txn.txnId, user?.token || '');
         if (ack?.status === 'accepted') {
-          await confirmSentTransaction(txn.txnId);
+          await confirmSentTransaction(txn.txnId, ack.receiverVpa);
           clearAck(txn.txnId);
           needsRefresh = true;
         } else if (ack?.status === 'rejected') {

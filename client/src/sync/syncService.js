@@ -8,9 +8,12 @@ import {
   getPendingSyncTransactions,
   updateTransactionStatus,
   updateWalletMeta,
-  TXN_STATUS
+  TXN_STATUS,
+  confirmSentTransaction
 } from '../ledger/localLedger';
 import { getWalletMeta } from '../ledger/localLedger';
+import { checkAck, clearAck } from '../transaction/ackService';
+import { openDB } from '../identity/keyStore';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -49,12 +52,31 @@ export async function syncPendingTransactions(token, vpa, deviceId) {
   // Revert invalid transactions back to PENDING_SCAN — they can't be synced
   // without a receiverVpa, and they shouldn't count as pending balance either
   for (const t of invalidPending) {
-    await updateTransactionStatus(
-      t.txnId,
-      TXN_STATUS.PENDING_SCAN,
-      'Reverted: no receiver VPA — QR was not scanned'
-    );
-    console.warn(`[Sync] Reverted txn ${t.txnId} to PENDING_SCAN (missing receiverVpa)`);
+    // Before reverting, check if there's an ack with the receiver VPA.
+    // This recovers transactions where ack arrived while polling was inactive.
+    const ack = await checkAck(t.txnId);
+    if (ack?.status === 'accepted' && ack.receiverVpa) {
+      await confirmSentTransaction(t.txnId, ack.receiverVpa);
+      clearAck(t.txnId);
+      // Re-read the now-valid entry from IndexedDB
+      const db = await openDB();
+      const recovered = await new Promise((res) => {
+        const idbTx = db.transaction('localTransactions', 'readonly');
+        const req = idbTx.objectStore('localTransactions').get(t.txnId);
+        req.onsuccess = () => res(req.result);
+        req.onerror = () => res(null);
+      });
+      if (recovered?.rawPayload?.receiverVpa) {
+        validPending.push(recovered);
+      }
+    } else {
+      // Genuinely missing receiverVpa — revert to PENDING_SCAN
+      await updateTransactionStatus(
+        t.txnId,
+        TXN_STATUS.PENDING_SCAN,
+        'Reverted: receiver VPA missing — QR not scanned yet'
+      );
+    }
   }
 
   const validPayloads = validPending.map((t) => t.rawPayload);

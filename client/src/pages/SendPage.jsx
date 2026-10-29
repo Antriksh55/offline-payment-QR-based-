@@ -104,8 +104,8 @@ export default function SendPage({ user, onBack, deviceId }) {
       clearInterval(pollRef.current);
 
       if (ack.status === 'accepted') {
-        // Receiver accepted — automatically confirm on sender side
-        await confirmSentTransaction(signedTxn.txnId);
+        // Receiver accepted — automatically confirm on sender side, passing receiver VPA
+        await confirmSentTransaction(signedTxn.txnId, ack.receiverVpa);
         const { balance: newBal } = await computeLocalBalance();
         setBalance(newBal);
         setAckReceiver(ack.receiverVpa);

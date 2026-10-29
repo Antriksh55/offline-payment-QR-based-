@@ -63,15 +63,42 @@ export async function recordSentTransaction(signedTxn) {
 
 /**
  * Confirm a sent transaction after the receiver has scanned the QR.
- * Moves status from PENDING_SCAN → PENDING_SYNC, which NOW affects balance.
- *
- * Called by the sender's app when it receives confirmation that the QR was scanned
- * (i.e. the receiver's app sends back an ack, or the sender taps "Receiver scanned it").
+ * Moves status from PENDING_SCAN → PENDING_SYNC, sets the receiver's VPA,
+ * and updates rawPayload.receiverVpa so sync can send it to the server.
  *
  * @param {string} txnId
+ * @param {string} receiverVpa - actual receiver VPA from the ack
  */
-export async function confirmSentTransaction(txnId) {
-  return updateTransactionStatus(txnId, TXN_STATUS.PENDING_SYNC);
+export async function confirmSentTransaction(txnId, receiverVpa) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('localTransactions', 'readwrite');
+    const store = tx.objectStore('localTransactions');
+    const getReq = store.get(txnId);
+
+    getReq.onsuccess = () => {
+      const entry = getReq.result;
+      if (!entry) { resolve(); return; }
+
+      entry.status = TXN_STATUS.PENDING_SYNC;
+
+      // Update counterpartyVpa from "(pending scan)" to the real receiver VPA
+      if (receiverVpa) {
+        entry.counterpartyVpa = receiverVpa;
+        // Critical: update rawPayload.receiverVpa so the sync service
+        // sends a complete payload to the server (empty receiverVpa is filtered out)
+        if (entry.rawPayload) {
+          entry.rawPayload = { ...entry.rawPayload, receiverVpa };
+        }
+      }
+
+      const putReq = store.put(entry);
+      putReq.onsuccess = () => resolve();
+      putReq.onerror = () => reject(putReq.error);
+    };
+
+    getReq.onerror = () => reject(getReq.error);
+  });
 }
 
 /**
