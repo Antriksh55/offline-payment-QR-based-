@@ -33,7 +33,20 @@ import { checkAck, clearAck } from '../transaction/ackService';
 import PinModal from '../components/PinModal';
 import '../styles/send.css';
 
-const POLL_INTERVAL_MS = 2500; // poll every 2.5 seconds
+const POLL_INTERVAL_MS = 2500;
+
+/** Parse an ack code pasted by the receiver: "ACK:txnId:receiverVpa:accepted" */
+function parseAckCode(code) {
+  try {
+    const parts = code.trim().split(':');
+    if (parts[0] !== 'ACK' || parts.length < 4) return null;
+    return {
+      txnId: parts[1],
+      receiverVpa: parts[2],
+      status: parts[3],
+    };
+  } catch { return null; }
+} // poll every 2.5 seconds
 
 /** Copies the raw signed transaction JSON to clipboard */
 function CopyPaymentData({ txn }) {
@@ -84,6 +97,9 @@ export default function SendPage({ user, onBack, deviceId }) {
   // ack states
   const [ackStatus, setAckStatus] = useState(null); // null | 'waiting' | 'accepted' | 'rejected'
   const [ackReceiver, setAckReceiver] = useState('');
+  const [showAckPaste, setShowAckPaste] = useState(false);
+  const [ackPasteText, setAckPasteText] = useState('');
+  const [ackPasteError, setAckPasteError] = useState('');
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -208,6 +224,34 @@ export default function SendPage({ user, onBack, deviceId }) {
   function handlePinCancel() {
     setShowPinModal(false);
     setPendingPaise(null);
+  }
+
+  // ── Paste Ack Code: sender pastes receiver's ack code offline ─────────────
+  async function handlePasteAckCode(e) {
+    e.preventDefault();
+    setAckPasteError('');
+    const parsed = parseAckCode(ackPasteText);
+    if (!parsed) {
+      setAckPasteError('Invalid ack code. Copy it exactly from the receiver\'s screen.');
+      return;
+    }
+    if (parsed.txnId !== signedTxn?.txnId) {
+      setAckPasteError('This ack code is for a different transaction.');
+      return;
+    }
+    if (parsed.status !== 'accepted') {
+      setAckPasteError('Payment was declined by the receiver.');
+      return;
+    }
+    // Valid ack — confirm the transaction
+    clearInterval(pollRef.current);
+    await confirmSentTransaction(signedTxn.txnId, parsed.receiverVpa);
+    const { balance: newBal } = await computeLocalBalance();
+    setBalance(newBal);
+    setAckReceiver(parsed.receiverVpa);
+    setAckStatus('accepted');
+    setShowAckPaste(false);
+    clearAck(signedTxn.txnId);
   }
 
   // ── Cancel: before ack arrives ────────────────────────────────────────────
@@ -343,9 +387,42 @@ export default function SendPage({ user, onBack, deviceId }) {
 
           <CopyPaymentData txn={signedTxn} />
 
+          {/* Offline ack: receiver copies ack code, sender pastes it here */}
+          {!showAckPaste ? (
+            <button
+              className="btn-paste-ack"
+              onClick={() => { setShowAckPaste(true); setAckPasteError(''); }}
+            >
+              📥 Paste Ack Code (from Receiver)
+            </button>
+          ) : (
+            <form onSubmit={handlePasteAckCode} className="ack-paste-form">
+              <p className="ack-paste-label">
+                Ask the receiver to tap <strong>"Copy Ack Code"</strong> after accepting, then paste it here:
+              </p>
+              <input
+                type="text"
+                className="ack-paste-input"
+                placeholder="ACK:txnId:receiverVpa:accepted"
+                value={ackPasteText}
+                onChange={(e) => setAckPasteText(e.target.value)}
+                autoFocus
+              />
+              {ackPasteError && <div className="error-msg">{ackPasteError}</div>}
+              <div className="ack-paste-btns">
+                <button type="button" className="btn-link" onClick={() => { setShowAckPaste(false); setAckPasteText(''); }}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" style={{flex:1}} disabled={!ackPasteText.trim()}>
+                  ✓ Confirm Payment
+                </button>
+              </div>
+            </form>
+          )}
+
           <div className="ack-waiting-note">
-            Payment will be confirmed automatically once the receiver accepts it.
-            <br/>You cannot self-confirm — only the receiver's scan/paste triggers confirmation.
+            Payment confirms automatically when receiver is on the same device/browser.
+            Use <strong>"Paste Ack Code"</strong> above for cross-device offline confirmation.
           </div>
 
           <button className="btn-cancel" onClick={handleCancel}>

@@ -29,6 +29,7 @@ export default function ReceivePage({ user, onBack }) {
   const [error, setError] = useState('');
   const [pasteText, setPasteText] = useState('');
   const [processing, setProcessing] = useState(false);
+  const [ackCopied, setAckCopied] = useState(false);
   const scannerRef = useRef(null);
 
   useEffect(() => {
@@ -163,6 +164,25 @@ export default function ReceivePage({ user, onBack }) {
 
   const fmt = (p) => `₹${(p / 100).toFixed(2)}`;
 
+  // Generate a short ack code: "ACK:txnId:receiverVpa:accepted"
+  // Sender pastes this to instantly confirm offline — no internet needed
+  async function handleCopyAckCode() {
+    if (!result) return;
+    const ackCode = `ACK:${result.txnId}:${result.receiverVpa}:accepted`;
+    try {
+      await navigator.clipboard.writeText(ackCode);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = ackCode;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    setAckCopied(true);
+    setTimeout(() => setAckCopied(false), 4000);
+  }
+
   return (
     <div className="receive-page">
       <header className="page-header">
@@ -287,6 +307,20 @@ export default function ReceivePage({ user, onBack }) {
           <button className="btn-primary" onClick={() => { setScanState(SCAN_STATE.IDLE); setResult(null); setPasteText(''); }}>
             Receive Another
           </button>
+
+          {/* Offline ack: receiver copies this code, sender pastes it to confirm instantly */}
+          <div className="ack-code-box">
+            <p className="ack-code-label">
+              📡 <strong>Offline demo?</strong> Copy this ack code and paste it on the sender's device to confirm payment instantly — no internet needed.
+            </p>
+            <button
+              className={`btn-copy-ack ${ackCopied ? 'copied' : ''}`}
+              onClick={handleCopyAckCode}
+            >
+              {ackCopied ? '✅ Ack Code Copied!' : '📤 Copy Ack Code (for Sender)'}
+            </button>
+          </div>
+
           <button className="btn-link" onClick={onBack}>Back to Dashboard</button>
         </div>
       )}

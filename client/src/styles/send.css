@@ -214,3 +214,41 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.2; }
 }
+
+/* Paste Ack Code — sender inputs receiver's ack */
+.btn-paste-ack {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.btn-paste-ack:hover { opacity: 0.9; }
+
+.ack-paste-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #f8f7ff;
+  border: 2px solid #a29bfe;
+  border-radius: 12px;
+  padding: 14px;
+}
+.ack-paste-label { font-size: 0.82rem; color: #6c5ce7; margin: 0; }
+.ack-paste-input {
+  padding: 10px 12px;
+  border: 1.5px solid #a29bfe;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-family: monospace;
+  outline: none;
+  width: 100%;
+}
+.ack-paste-input:focus { border-color: #6c5ce7; }
+.ack-paste-btns { display: flex; gap: 8px; align-items: center; }

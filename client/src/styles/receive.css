@@ -145,3 +145,37 @@
   transition: background 0.2s;
 }
 .btn-upload-qr:hover { background: rgba(0,184,148,0.06); }
+
+/* Ack code box on success screen */
+.ack-code-box {
+  width: 100%;
+  background: #f0fff8;
+  border: 2px solid #00b894;
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+.ack-code-label {
+  font-size: 0.82rem;
+  color: #00b894;
+  text-align: center;
+  margin: 0;
+  line-height: 1.5;
+}
+.btn-copy-ack {
+  width: 100%;
+  padding: 11px;
+  background: #00b894;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-copy-ack:hover { background: #00a381; }
+.btn-copy-ack.copied { background: #6c5ce7; }
