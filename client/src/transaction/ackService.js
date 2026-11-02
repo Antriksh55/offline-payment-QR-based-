@@ -1,48 +1,89 @@
 /**
  * Acknowledgement Service
  *
- * When a receiver accepts a payment (scan or paste), they write a signed
- * acknowledgement so the SENDER's tab automatically moves the transaction
- * from PENDING_SCAN → PENDING_SYNC without any manual confirmation.
+ * Channels (tried in order, all in parallel):
+ * 1. BroadcastChannel — same device, cross-tab, instant, works offline
+ * 2. localStorage     — same browser, cross-tab, instant, works offline
+ * 3. IndexedDB        — persistent across reloads, works offline
+ * 4. Server /api/ack  — cross-device, requires internet
  *
- * The sender can NEVER self-confirm — only a receiver ack can do that.
- *
- * Two channels (both tried):
- * 1. localStorage + storage event  — works instantly for two tabs in the same browser
- * 2. Server POST /api/ack          — works across different devices / browsers
- *
- * Ack object stored under key `ack:<txnId>`:
- * {
- *   txnId: string,
- *   receiverVpa: string,
- *   acceptedAt: number,   // ms epoch
- *   status: 'accepted' | 'rejected',
- *   reason?: string
- * }
+ * The sender polls all 4 channels every 2.5s.
+ * As long as sender & receiver share ANY channel, the ack will arrive.
  */
+
+import { openDB } from '../identity/keyStore';
 
 const ACK_PREFIX = 'ack:';
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
+// BroadcastChannel — works across tabs on same device, fully offline
+let bc = null;
+try { bc = new BroadcastChannel('offlinepay_ack'); } catch {}
+
+// In-memory cache of received acks (for instant same-session reads)
+const memAcks = new Map();
+
+// Listen for acks from other tabs via BroadcastChannel
+if (bc) {
+  bc.onmessage = (event) => {
+    if (event.data?.type === 'ack' && event.data.ack?.txnId) {
+      memAcks.set(event.data.ack.txnId, event.data.ack);
+      // Also write to localStorage for persistence
+      try {
+        localStorage.setItem(`${ACK_PREFIX}${event.data.ack.txnId}`, JSON.stringify(event.data.ack));
+      } catch {}
+    }
+  };
+}
+
+/** Write ack to IndexedDB */
+async function writeAckToIDB(ack) {
+  try {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('walletMeta', 'readwrite');
+      const store = tx.objectStore('walletMeta');
+      const req = store.put(ack, `${ACK_PREFIX}${ack.txnId}`);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } catch {}
+}
+
+/** Read ack from IndexedDB */
+async function readAckFromIDB(txnId) {
+  try {
+    const db = await openDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('walletMeta', 'readonly');
+      const store = tx.objectStore('walletMeta');
+      const req = store.get(`${ACK_PREFIX}${txnId}`);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch { return null; }
+}
+
 /**
  * Receiver calls this after successfully verifying and recording a payment.
- * Writes the ack locally AND posts it to the server.
- *
- * @param {string} txnId
- * @param {string} receiverVpa
- * @param {'accepted'|'rejected'} status
- * @param {string} [reason]
- * @param {string} [token]
+ * Broadcasts ack across all available channels.
  */
 export async function writeAck(txnId, receiverVpa, status = 'accepted', reason = '', token = '') {
   const ack = { txnId, receiverVpa, acceptedAt: Date.now(), status, reason };
 
-  // Channel 1: localStorage (same-browser, instant)
-  try {
-    localStorage.setItem(`${ACK_PREFIX}${txnId}`, JSON.stringify(ack));
-  } catch {}
+  // In-memory (instant for same JS context)
+  memAcks.set(txnId, ack);
 
-  // Channel 2: Server (cross-device)
+  // Channel 1: BroadcastChannel (cross-tab, same device, offline)
+  try { bc?.postMessage({ type: 'ack', ack }); } catch {}
+
+  // Channel 2: localStorage (cross-tab, same browser, offline)
+  try { localStorage.setItem(`${ACK_PREFIX}${txnId}`, JSON.stringify(ack)); } catch {}
+
+  // Channel 3: IndexedDB (persistent, survives reload, offline)
+  await writeAckToIDB(ack);
+
+  // Channel 4: Server (cross-device, needs internet — non-fatal if offline)
   try {
     await fetch(`${API_BASE}/ack`, {
       method: 'POST',
@@ -53,35 +94,47 @@ export async function writeAck(txnId, receiverVpa, status = 'accepted', reason =
       body: JSON.stringify(ack)
     });
   } catch {
-    // Non-fatal — same-browser path works without server
+    // Offline — other channels handle same-device delivery
   }
 }
 
 /**
- * Sender calls this to check if an ack has arrived for a given txnId.
- * Checks localStorage first, then polls server.
- *
- * @param {string} txnId
- * @param {string} [token]
- * @returns {object|null} ack object or null
+ * Sender polls this to check if an ack has arrived.
+ * Checks all channels: memory → localStorage → IndexedDB → server.
  */
 export async function checkAck(txnId, token = '') {
-  // Channel 1: localStorage
+  // Channel 1: in-memory (instant)
+  if (memAcks.has(txnId)) return memAcks.get(txnId);
+
+  // Channel 2: localStorage
   try {
     const raw = localStorage.getItem(`${ACK_PREFIX}${txnId}`);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const ack = JSON.parse(raw);
+      memAcks.set(txnId, ack);
+      return ack;
+    }
   } catch {}
 
-  // Channel 2: Server
+  // Channel 3: IndexedDB (works offline, survives reload)
+  const idbAck = await readAckFromIDB(txnId);
+  if (idbAck) {
+    memAcks.set(txnId, idbAck);
+    return idbAck;
+  }
+
+  // Channel 4: Server (cross-device, needs internet)
   try {
     const res = await fetch(`${API_BASE}/ack/${encodeURIComponent(txnId)}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal: AbortSignal.timeout(3000) // 3s timeout — don't block offline detection
     });
     if (res.ok) {
       const data = await res.json();
       if (data.ack) {
-        // Cache locally for instant next reads
+        memAcks.set(txnId, data.ack);
         localStorage.setItem(`${ACK_PREFIX}${txnId}`, JSON.stringify(data.ack));
+        await writeAckToIDB(data.ack);
         return data.ack;
       }
     }
@@ -91,8 +144,14 @@ export async function checkAck(txnId, token = '') {
 }
 
 /**
- * Clean up an ack from localStorage once the sender has processed it.
+ * Clean up ack from all local stores once sender has processed it.
  */
-export function clearAck(txnId) {
+export async function clearAck(txnId) {
+  memAcks.delete(txnId);
   try { localStorage.removeItem(`${ACK_PREFIX}${txnId}`); } catch {}
+  try {
+    const db = await openDB();
+    const tx = db.transaction('walletMeta', 'readwrite');
+    tx.objectStore('walletMeta').delete(`${ACK_PREFIX}${txnId}`);
+  } catch {}
 }
