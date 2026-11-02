@@ -32,7 +32,20 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/offlin
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 app.use(cors({
-  origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  origin: function(origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, Postman)
+    // and any vercel.app or onrender.com domain for demo deployment
+    if (!origin) return callback(null, true);
+    if (
+      origin === process.env.CLIENT_ORIGIN ||
+      origin.endsWith('.vercel.app') ||
+      origin.endsWith('.onrender.com') ||
+      origin === 'http://localhost:5173'
+    ) {
+      return callback(null, true);
+    }
+    return callback(null, true); // allow all for demo
+  },
   credentials: true
 }));
 app.use(express.json({ limit: '2mb' }));
