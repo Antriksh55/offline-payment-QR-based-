@@ -141,11 +141,12 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
           await confirmSentTransaction(txn.txnId, ack.receiverVpa);
           clearAck(txn.txnId);
           needsRefresh = true;
-        } else if (ack?.status === 'rejected') {
-          await cancelSentTransaction(txn.txnId);
-          clearAck(txn.txnId);
-          needsRefresh = true;
         }
+        // IMPORTANT: Never auto-cancel on dashboard load.
+        // A rejected ack (or no ack found) does NOT mean the transaction failed —
+        // it may mean: (a) receiver hasn't scanned yet, (b) we're offline and
+        // the ack is on a different device's storage. Only the user can cancel
+        // via the explicit "Cancel this payment" button in the expanded row.
       }
 
       // Re-fetch if any statuses changed
