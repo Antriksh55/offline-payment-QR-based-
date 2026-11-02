@@ -128,3 +128,20 @@
   background: #fafafa;
 }
 .paste-textarea:focus { border-color: #6c5ce7; background: #fff; }
+
+/* Upload QR image button */
+.btn-upload-qr {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  background: transparent;
+  color: #00b894;
+  border: 2px solid #00b894;
+  border-radius: 12px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.2s;
+}
+.btn-upload-qr:hover { background: rgba(0,184,148,0.06); }

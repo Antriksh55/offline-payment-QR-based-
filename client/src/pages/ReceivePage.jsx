@@ -62,11 +62,11 @@ export default function ReceivePage({ user, onBack }) {
       );
     } catch (err) {
       if (err.name === 'NotAllowedError' || err.message?.includes('permission')) {
-        setError('Camera permission denied. Use "Paste Payment Data" instead for desktop testing.');
+        setError('Camera permission denied. Please allow camera access in your browser settings, or use "Paste Payment Data" instead.');
       } else if (err.message?.includes('No cameras') || err.message?.includes('no camera')) {
         setError('No camera found. Use "Paste Payment Data" instead.');
       } else {
-        setError(`Camera error: ${err.message}. Try "Paste Payment Data" instead.`);
+        setError(`Camera error: ${err.message || 'Could not access camera'}. Try allowing camera in browser settings or use "Paste Payment Data".`);
       }
       setScanState(SCAN_STATE.IDLE);
     }
@@ -78,6 +78,32 @@ export default function ReceivePage({ user, onBack }) {
       scannerRef.current = null;
     }
     setScanState(SCAN_STATE.IDLE);
+  }
+
+  // ── File/Image upload fallback ────────────────────────────────────────────
+  async function handleFileUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setProcessing(true);
+    setError('');
+    try {
+      const scannerId = 'qr-file-scanner';
+      let div = document.getElementById(scannerId);
+      if (!div) {
+        div = document.createElement('div');
+        div.id = scannerId;
+        div.style.display = 'none';
+        document.body.appendChild(div);
+      }
+      const scanner = new Html5Qrcode(scannerId);
+      const result = await scanner.scanFile(file, true);
+      await handleScannedPayload(result);
+    } catch (err) {
+      setError('Could not read QR from image. Make sure the QR is clear and try again.');
+      setScanState(SCAN_STATE.IDLE);
+    } finally {
+      setProcessing(false);
+    }
   }
 
   // ── Paste handler ─────────────────────────────────────────────────────────
@@ -157,9 +183,21 @@ export default function ReceivePage({ user, onBack }) {
             📷 Scan QR Code (Mobile)
           </button>
 
-          <div className="or-divider">
-            <span>or</span>
-          </div>
+          <div className="or-divider"><span>or</span></div>
+
+          {/* File upload — take photo or pick from gallery */}
+          <label className="btn-upload-qr">
+            🖼️ Upload QR Image (take photo / gallery)
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: 'none' }}
+              onChange={handleFileUpload}
+            />
+          </label>
+
+          <div className="or-divider"><span>or</span></div>
 
           <button className="btn-secondary" onClick={() => { setScanState(SCAN_STATE.PASTE); setError(''); }}>
             📋 Paste Payment Data (Desktop)
