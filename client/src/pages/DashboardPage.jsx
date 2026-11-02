@@ -11,6 +11,8 @@ import { syncPendingTransactions } from '../sync/syncService';
 import { checkAck, clearAck } from '../transaction/ackService';
 import '../styles/dashboard.css';
 
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
 const STATUS_LABELS = {
   [TXN_STATUS.PENDING_SCAN]: { label: 'QR Not Scanned', className: 'status-awaiting', icon: '⏳' },
   [TXN_STATUS.PENDING_SYNC]: { label: 'Pending Sync',   className: 'status-pending',  icon: '🔄' },
@@ -58,7 +60,7 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 3000); // 3s timeout
-      const res = await fetch('/api/health', {
+      const res = await fetch(`${API_BASE}/health`, {
         method: 'GET',
         signal: controller.signal,
         cache: 'no-store'
@@ -94,7 +96,7 @@ export default function DashboardPage({ user, onNavigate, onLogout, deviceId }) 
       // is written to IndexedDB BEFORE computeLocalBalance() reads it.
       if (user?.token && user?.vpa) {
         try {
-          const res = await fetch(`/api/balance/${encodeURIComponent(user.vpa)}`, {
+          const res = await fetch(`${API_BASE}/balance/${encodeURIComponent(user.vpa)}`, {
             headers: { Authorization: `Bearer ${user.token}` }
           });
           if (res.ok) {
