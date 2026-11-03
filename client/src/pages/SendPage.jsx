@@ -35,16 +35,19 @@ import '../styles/send.css';
 
 const POLL_INTERVAL_MS = 2500;
 
-/** Parse an ack code pasted by the receiver: "ACK:txnId:receiverVpa:accepted" */
-function parseAckCode(code) {
+/** Parse the short ack code: "ACK-[first6ofTxnId]-[receiverVpa]" */
+function parseAckCode(code, txnId) {
   try {
-    const parts = code.trim().split(':');
-    if (parts[0] !== 'ACK' || parts.length < 4) return null;
-    return {
-      txnId: parts[1],
-      receiverVpa: parts[2],
-      status: parts[3],
-    };
+    const trimmed = code.trim();
+    // Format: ACK-XXXXXX-vpa@bank
+    const match = trimmed.match(/^ACK-([A-Za-z0-9]{6})-(.+)$/i);
+    if (!match) return null;
+    const shortCode = match[1].toUpperCase();
+    const receiverVpa = match[2];
+    // Verify the short code matches the first 6 chars of the current txnId
+    const expectedShort = txnId.replace(/-/g, '').slice(0, 6).toUpperCase();
+    if (shortCode !== expectedShort) return null;
+    return { txnId, receiverVpa, status: 'accepted' };
   } catch { return null; }
 } // poll every 2.5 seconds
 

@@ -164,11 +164,13 @@ export default function ReceivePage({ user, onBack }) {
 
   const fmt = (p) => `₹${(p / 100).toFixed(2)}`;
 
-  // Generate a short ack code: "ACK:txnId:receiverVpa:accepted"
-  // Sender pastes this to instantly confirm offline — no internet needed
+  // Generate a SHORT ack code: "ACK-[first6ofTxnId]-[receiverVpa]"
+  // e.g. "ACK-a1b2c3-utsav@fakebankb"
+  // Easy to share via WhatsApp, SMS, or type manually — works 100% offline
   async function handleCopyAckCode() {
     if (!result) return;
-    const ackCode = `ACK:${result.txnId}:${result.receiverVpa}:accepted`;
+    const shortId = result.txnId.replace(/-/g, '').slice(0, 6).toUpperCase();
+    const ackCode = `ACK-${shortId}-${result.receiverVpa}`;
     try {
       await navigator.clipboard.writeText(ackCode);
     } catch {
