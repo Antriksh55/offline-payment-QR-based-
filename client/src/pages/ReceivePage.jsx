@@ -49,28 +49,45 @@ export default function ReceivePage({ user, onBack }) {
     setError('');
     setResult(null);
 
-    try {
-      const scanner = new Html5Qrcode(SCANNER_ID);
-      scannerRef.current = scanner;
+    // Try cameras in order: rear → front → any (covers both mobile and laptop webcam)
+    const cameraCandidates = [
+      { facingMode: 'environment' }, // mobile rear camera
+      { facingMode: 'user' },         // laptop webcam / mobile front camera
+    ];
 
-      await scanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 280, height: 280 } },
-        async (decodedText) => {
-          await scanner.stop();
+    let started = false;
+    for (const cameraConstraint of cameraCandidates) {
+      try {
+        const scanner = new Html5Qrcode(SCANNER_ID);
+        scannerRef.current = scanner;
+        await scanner.start(
+          cameraConstraint,
+          { fps: 10, qrbox: { width: 280, height: 280 } },
+          async (decodedText) => {
+            await scanner.stop().catch(() => {});
+            scannerRef.current = null;
+            await handleScannedPayload(decodedText);
+          },
+          () => {}
+        );
+        started = true;
+        break;
+      } catch (err) {
+        if (scannerRef.current) {
+          scannerRef.current.stop().catch(() => {});
           scannerRef.current = null;
-          await handleScannedPayload(decodedText);
-        },
-        () => {} // per-frame failures are normal
-      );
-    } catch (err) {
-      if (err.name === 'NotAllowedError' || err.message?.includes('permission')) {
-        setError('Camera permission denied. Please allow camera access in your browser settings, or use "Paste Payment Data" instead.');
-      } else if (err.message?.includes('No cameras') || err.message?.includes('no camera')) {
-        setError('No camera found. Use "Paste Payment Data" instead.');
-      } else {
-        setError(`Camera error: ${err.message || 'Could not access camera'}. Try allowing camera in browser settings or use "Paste Payment Data".`);
+        }
+        // If permission denied, no point trying other cameras
+        if (err.name === 'NotAllowedError' || err.message?.includes('permission')) {
+          setError('Camera permission denied. Please allow camera access in your browser settings, or use "Paste Payment Data" instead.');
+          setScanState(SCAN_STATE.IDLE);
+          return;
+        }
       }
+    }
+
+    if (!started) {
+      setError('No camera found. Use "Upload QR Image" or "Paste Payment Data" instead.');
       setScanState(SCAN_STATE.IDLE);
     }
   }

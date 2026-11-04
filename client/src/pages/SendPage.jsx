@@ -269,23 +269,44 @@ export default function SendPage({ user, onBack, deviceId }) {
   async function startAckScanner() {
     setShowAckScanner(true);
     setAckPasteError('');
-    try {
-      const scanner = new Html5Qrcode(ACK_SCANNER_ID);
-      ackScannerRef.current = scanner;
-      await scanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 240, height: 240 } },
-        async (decoded) => {
-          await scanner.stop();
+
+    // Try cameras in order: rear → front → any
+    const cameraCandidates = [
+      { facingMode: 'environment' },  // mobile rear
+      { facingMode: 'user' },          // laptop webcam / mobile front
+    ];
+
+    let started = false;
+    for (const cameraConstraint of cameraCandidates) {
+      try {
+        const scanner = new Html5Qrcode(ACK_SCANNER_ID);
+        ackScannerRef.current = scanner;
+        await scanner.start(
+          cameraConstraint,
+          { fps: 10, qrbox: { width: 240, height: 240 } },
+          async (decoded) => {
+            await scanner.stop().catch(() => {});
+            ackScannerRef.current = null;
+            setShowAckScanner(false);
+            await processAckCode(decoded);
+          },
+          () => {}
+        );
+        started = true;
+        break; // successfully started
+      } catch {
+        // try next camera
+        if (ackScannerRef.current) {
+          ackScannerRef.current.stop().catch(() => {});
           ackScannerRef.current = null;
-          setShowAckScanner(false);
-          await processAckCode(decoded);
-        },
-        () => {}
-      );
-    } catch {
+        }
+      }
+    }
+
+    if (!started) {
       setShowAckScanner(false);
       setAckPasteError('');
+      // Don't show an error — just let them use upload or paste
     }
   }
 
