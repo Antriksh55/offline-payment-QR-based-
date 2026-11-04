@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
+import QRCode from 'qrcode';
 import { receiveScannedTransaction } from '../ledger/localLedger';
 import { writeAck } from '../transaction/ackService';
 import '../styles/receive.css';
@@ -30,6 +31,7 @@ export default function ReceivePage({ user, onBack }) {
   const [pasteText, setPasteText] = useState('');
   const [processing, setProcessing] = useState(false);
   const [ackCopied, setAckCopied] = useState(false);
+  const [ackQrUrl, setAckQrUrl] = useState(null); // QR code for sender to scan
   const scannerRef = useRef(null);
 
   useEffect(() => {
@@ -156,6 +158,20 @@ export default function ReceivePage({ user, onBack }) {
       await writeAck(enrichedPayload.txnId, user.vpa, 'accepted', '', user.token);
       setResult(enrichedPayload);
       setScanState(SCAN_STATE.SUCCESS);
+
+      // Generate ACK QR for sender to scan — works 100% offline
+      // Format: ACK-[first6ofTxnId]-[receiverVpa]
+      const shortId = enrichedPayload.txnId.replace(/-/g, '').slice(0, 6).toUpperCase();
+      const ackCode = `ACK-${shortId}-${user.vpa}`;
+      try {
+        const qrUrl = await QRCode.toDataURL(ackCode, {
+          errorCorrectionLevel: 'M',
+          width: 280,
+          margin: 2,
+          color: { dark: '#00b894', light: '#ffffff' }
+        });
+        setAckQrUrl(qrUrl);
+      } catch { /* non-fatal */ }
     } catch (err) {
       setError(`Failed to record transaction: ${err.message}`);
       setScanState(SCAN_STATE.ERROR);
@@ -306,23 +322,35 @@ export default function ReceivePage({ user, onBack }) {
             </div>
           </div>
 
-          <button className="btn-primary" onClick={() => { setScanState(SCAN_STATE.IDLE); setResult(null); setPasteText(''); }}>
-            Receive Another
-          </button>
+          {/* ACK QR — sender scans this to confirm payment instantly (offline) */}
+          {ackQrUrl && (
+            <div className="ack-qr-box">
+              <p className="ack-qr-label">
+                📲 <strong>Show this to sender</strong> — they scan it to confirm payment offline
+              </p>
+              <div className="ack-qr-container">
+                <img src={ackQrUrl} alt="Ack QR Code" className="ack-qr-image" />
+              </div>
+              <p className="ack-qr-hint">No internet needed — sender scans with their camera</p>
+            </div>
+          )}
 
-          {/* Offline ack: receiver copies this code, sender pastes it to confirm instantly */}
+          {/* Fallback: copy short ack code */}
           <div className="ack-code-box">
             <p className="ack-code-label">
-              📡 <strong>Offline demo?</strong> Copy this ack code and paste it on the sender's device to confirm payment instantly — no internet needed.
+              ✏️ No camera? Share this code verbally or via any messenger:
             </p>
             <button
               className={`btn-copy-ack ${ackCopied ? 'copied' : ''}`}
               onClick={handleCopyAckCode}
             >
-              {ackCopied ? '✅ Ack Code Copied!' : '📤 Copy Ack Code (for Sender)'}
+              {ackCopied ? '✅ Copied!' : '📤 Copy Ack Code'}
             </button>
           </div>
 
+          <button className="btn-primary" onClick={() => { setScanState(SCAN_STATE.IDLE); setResult(null); setPasteText(''); setAckQrUrl(null); }}>
+            Receive Another
+          </button>
           <button className="btn-link" onClick={onBack}>Back to Dashboard</button>
         </div>
       )}

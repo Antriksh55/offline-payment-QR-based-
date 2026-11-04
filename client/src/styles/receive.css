@@ -179,3 +179,31 @@
 }
 .btn-copy-ack:hover { background: #00a381; }
 .btn-copy-ack.copied { background: #6c5ce7; }
+
+/* Ack QR on success screen */
+.ack-qr-box {
+  width: 100%;
+  background: #f0fff8;
+  border: 2px solid #00b894;
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.ack-qr-label {
+  font-size: 0.85rem;
+  color: #00b894;
+  text-align: center;
+  margin: 0;
+  font-weight: 600;
+}
+.ack-qr-container {
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px;
+  box-shadow: 0 2px 12px rgba(0,184,148,0.15);
+}
+.ack-qr-image { display: block; width: 200px; height: 200px; }
+.ack-qr-hint { font-size: 0.75rem; color: #636e72; text-align: center; margin: 0; }

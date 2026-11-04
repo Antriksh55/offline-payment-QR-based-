@@ -252,3 +252,43 @@
 }
 .ack-paste-input:focus { border-color: #6c5ce7; }
 .ack-paste-btns { display: flex; gap: 8px; align-items: center; }
+
+/* Ack options group */
+.ack-options {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Scan Ack QR button — primary action */
+.btn-scan-ack {
+  width: 100%;
+  padding: 13px;
+  background: linear-gradient(135deg, #00b894, #00cec9);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.btn-scan-ack:hover { opacity: 0.9; }
+
+/* Ack QR scanner container */
+.ack-scanner-wrap {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.ack-scanner-hint { font-size: 0.85rem; color: #636e72; text-align: center; }
+.ack-scanner-container {
+  width: 100%;
+  max-width: 300px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 3px solid #00b894;
+}

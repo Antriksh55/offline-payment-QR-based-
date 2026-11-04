@@ -30,10 +30,12 @@ import {
 } from '../ledger/localLedger';
 import { getKeypair } from '../identity/keyStore';
 import { checkAck, clearAck } from '../transaction/ackService';
+import { Html5Qrcode } from 'html5-qrcode';
 import PinModal from '../components/PinModal';
 import '../styles/send.css';
 
 const POLL_INTERVAL_MS = 2500;
+const ACK_SCANNER_ID = 'ack-qr-scanner';
 
 /** Parse the short ack code: "ACK-[first6ofTxnId]-[receiverVpa]" */
 function parseAckCode(code, txnId) {
@@ -103,6 +105,8 @@ export default function SendPage({ user, onBack, deviceId }) {
   const [showAckPaste, setShowAckPaste] = useState(false);
   const [ackPasteText, setAckPasteText] = useState('');
   const [ackPasteError, setAckPasteError] = useState('');
+  const [showAckScanner, setShowAckScanner] = useState(false);
+  const ackScannerRef = useRef(null);
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -282,6 +286,54 @@ export default function SendPage({ user, onBack, deviceId }) {
     setBalance(newBal);
   }
 
+  // ── Scan Ack QR: sender scans the QR shown on receiver's screen ─────────
+  async function startAckScanner() {
+    setShowAckScanner(true);
+    setAckPasteError('');
+    try {
+      const scanner = new Html5Qrcode(ACK_SCANNER_ID);
+      ackScannerRef.current = scanner;
+      await scanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 240, height: 240 } },
+        async (decoded) => {
+          if (!parsed) {
+            setAckPasteError('Invalid ack QR. Ask receiver to show their confirmation screen.');
+            return;
+          }
+          clearInterval(pollRef.current);
+          await confirmSentTransaction(signedTxn.txnId, parsed.receiverVpa);
+          const { balance: newBal } = await computeLocalBalance();
+          setBalance(newBal);
+          setAckReceiver(parsed.receiverVpa);
+          setAckStatus('accepted');
+          clearAck(signedTxn.txnId);
+        },
+        () => {}
+      );
+    } catch {
+      setShowAckScanner(false);
+      setAckPasteError('Camera not available. Use "Paste Ack Code" instead.');
+    }
+  }
+
+  async function stopAckScanner() {
+    if (ackScannerRef.current) {
+      try { await ackScannerRef.current.stop(); } catch {}
+      ackScannerRef.current = null;
+    }
+    setShowAckScanner(false);
+  }
+
+  // cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (ackScannerRef.current) {
+        ackScannerRef.current.stop().catch(() => {});
+      }
+    };
+  }, []);
+
   async function handleNewTransaction() {
     clearInterval(pollRef.current);
     setQrDataUrl(null);
@@ -390,47 +442,61 @@ export default function SendPage({ user, onBack, deviceId }) {
 
           <CopyPaymentData txn={signedTxn} />
 
-          {/* Offline ack: receiver copies ack code, sender pastes it here */}
-          {!showAckPaste ? (
-            <button
-              className="btn-paste-ack"
-              onClick={() => { setShowAckPaste(true); setAckPasteError(''); }}
-            >
-              📥 Paste Ack Code (from Receiver)
-            </button>
-          ) : (
+          {/* ── Ack QR Scanner — most natural cross-device confirmation ── */}
+          {!showAckScanner && !showAckPaste && (
+            <div className="ack-options">
+              <button className="btn-scan-ack" onClick={startAckScanner}>
+                📷 Scan Receiver's Confirmation QR
+              </button>
+              <button
+                className="btn-paste-ack"
+                onClick={() => { setShowAckPaste(true); setAckPasteError(''); }}
+              >
+                ✏️ Type / Paste Ack Code Instead
+              </button>
+            </div>
+          )}
+
+          {/* Ack QR scanner view */}
+          {showAckScanner && (
+            <div className="ack-scanner-wrap">
+              <p className="ack-scanner-hint">Point camera at receiver's green QR code</p>
+              <div id={ACK_SCANNER_ID} className="ack-scanner-container" />
+              <button className="btn-secondary" onClick={stopAckScanner}>Cancel</button>
+            </div>
+          )}
+
+          {/* Paste ack code fallback */}
+          {showAckPaste && !showAckScanner && (
             <form onSubmit={handlePasteAckCode} className="ack-paste-form">
               <p className="ack-paste-label">
-                Ask the receiver to tap <strong>"Copy Ack Code"</strong> after accepting, then paste it here:
+                Paste the short code shown on receiver's screen (e.g. <code>ACK-A1B2C3-utsav@fakebankb</code>):
               </p>
               <input
                 type="text"
                 className="ack-paste-input"
-                placeholder="ACK:txnId:receiverVpa:accepted"
+                placeholder="ACK-XXXXXX-vpa@bank"
                 value={ackPasteText}
                 onChange={(e) => setAckPasteText(e.target.value)}
                 autoFocus
               />
               {ackPasteError && <div className="error-msg">{ackPasteError}</div>}
               <div className="ack-paste-btns">
-                <button type="button" className="btn-link" onClick={() => { setShowAckPaste(false); setAckPasteText(''); }}>
-                  Cancel
-                </button>
+                <button type="button" className="btn-link" onClick={() => { setShowAckPaste(false); setAckPasteText(''); }}>← Back</button>
                 <button type="submit" className="btn-primary" style={{flex:1}} disabled={!ackPasteText.trim()}>
-                  ✓ Confirm Payment
+                  ✓ Confirm
                 </button>
               </div>
             </form>
           )}
 
+          {ackPasteError && !showAckPaste && <div className="error-msg">{ackPasteError}</div>}
+
           <div className="ack-waiting-note">
-            Payment confirms automatically when receiver is on the same device/browser.
-            Use <strong>"Paste Ack Code"</strong> above for cross-device offline confirmation.
+            Ask the receiver to show their <strong>green confirmation QR</strong> — scan it to confirm instantly. Works offline.
           </div>
 
-          <button className="btn-cancel" onClick={handleCancel}>
-            ✕ Cancel Payment
-          </button>
+          <button className="btn-cancel" onClick={handleCancel}>✕ Cancel Payment</button>
         </div>
       )}
 
