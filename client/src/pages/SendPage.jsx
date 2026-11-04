@@ -237,28 +237,7 @@ export default function SendPage({ user, onBack, deviceId }) {
   async function handlePasteAckCode(e) {
     e.preventDefault();
     setAckPasteError('');
-    const parsed = parseAckCode(ackPasteText);
-    if (!parsed) {
-      setAckPasteError('Invalid ack code. Copy it exactly from the receiver\'s screen.');
-      return;
-    }
-    if (parsed.txnId !== signedTxn?.txnId) {
-      setAckPasteError('This ack code is for a different transaction.');
-      return;
-    }
-    if (parsed.status !== 'accepted') {
-      setAckPasteError('Payment was declined by the receiver.');
-      return;
-    }
-    // Valid ack — confirm the transaction
-    clearInterval(pollRef.current);
-    await confirmSentTransaction(signedTxn.txnId, parsed.receiverVpa);
-    const { balance: newBal } = await computeLocalBalance();
-    setBalance(newBal);
-    setAckReceiver(parsed.receiverVpa);
-    setAckStatus('accepted');
-    setShowAckPaste(false);
-    clearAck(signedTxn.txnId);
+    await processAckCode(ackPasteText);
   }
 
   // ── Cancel: before ack arrives ────────────────────────────────────────────
@@ -297,24 +276,55 @@ export default function SendPage({ user, onBack, deviceId }) {
         { facingMode: 'environment' },
         { fps: 10, qrbox: { width: 240, height: 240 } },
         async (decoded) => {
-          if (!parsed) {
-            setAckPasteError('Invalid ack QR. Ask receiver to show their confirmation screen.');
-            return;
-          }
-          clearInterval(pollRef.current);
-          await confirmSentTransaction(signedTxn.txnId, parsed.receiverVpa);
-          const { balance: newBal } = await computeLocalBalance();
-          setBalance(newBal);
-          setAckReceiver(parsed.receiverVpa);
-          setAckStatus('accepted');
-          clearAck(signedTxn.txnId);
+          await scanner.stop();
+          ackScannerRef.current = null;
+          setShowAckScanner(false);
+          await processAckCode(decoded);
         },
         () => {}
       );
     } catch {
       setShowAckScanner(false);
-      setAckPasteError('Camera not available. Use "Paste Ack Code" instead.');
+      setAckPasteError('');
     }
+  }
+
+  // ── Upload ack QR image (laptop / no-camera fallback) ─────────────────────
+  async function handleAckFileUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAckPasteError('');
+    try {
+      const scannerId = 'ack-file-scanner';
+      let div = document.getElementById(scannerId);
+      if (!div) {
+        div = document.createElement('div');
+        div.id = scannerId;
+        div.style.display = 'none';
+        document.body.appendChild(div);
+      }
+      const scanner = new Html5Qrcode(scannerId);
+      const decoded = await scanner.scanFile(file, true);
+      await processAckCode(decoded);
+    } catch {
+      setAckPasteError('Could not read QR from image. Make sure the image is clear.');
+    }
+  }
+
+  // ── Shared ack code processor ─────────────────────────────────────────────
+  async function processAckCode(code) {
+    const parsed = parseAckCode(code, signedTxn?.txnId);
+    if (!parsed) {
+      setAckPasteError('Invalid ack QR/code. Ask receiver to show their green confirmation screen.');
+      return;
+    }
+    clearInterval(pollRef.current);
+    await confirmSentTransaction(signedTxn.txnId, parsed.receiverVpa);
+    const { balance: newBal } = await computeLocalBalance();
+    setBalance(newBal);
+    setAckReceiver(parsed.receiverVpa);
+    setAckStatus('accepted');
+    clearAck(signedTxn.txnId);
   }
 
   async function stopAckScanner() {
@@ -448,6 +458,16 @@ export default function SendPage({ user, onBack, deviceId }) {
               <button className="btn-scan-ack" onClick={startAckScanner}>
                 📷 Scan Receiver's Confirmation QR
               </button>
+              <label className="btn-scan-ack btn-upload-ack">
+                🖼️ Upload Photo of Receiver's QR
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  style={{ display: 'none' }}
+                  onChange={handleAckFileUpload}
+                />
+              </label>
               <button
                 className="btn-paste-ack"
                 onClick={() => { setShowAckPaste(true); setAckPasteError(''); }}
