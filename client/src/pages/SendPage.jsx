@@ -270,6 +270,21 @@ export default function SendPage({ user, onBack, deviceId }) {
     setShowAckScanner(true);
     setAckPasteError('');
 
+    // Request camera permission explicitly first.
+    // html5-qrcode calls enumerateDevices() before asking permission —
+    // this returns 0 devices if permission was never granted, causing
+    // "No camera found" even when a camera exists.
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach((t) => t.stop());
+    } catch (err) {
+      setShowAckScanner(false);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setAckPasteError('Camera permission denied. Allow camera in browser settings or use "Upload Photo" / "Paste Code" below.');
+      }
+      return;
+    }
+
     // Try cameras in order: rear → front → any
     const cameraCandidates = [
       { facingMode: 'environment' },  // mobile rear
@@ -293,9 +308,8 @@ export default function SendPage({ user, onBack, deviceId }) {
           () => {}
         );
         started = true;
-        break; // successfully started
+        break;
       } catch {
-        // try next camera
         if (ackScannerRef.current) {
           ackScannerRef.current.stop().catch(() => {});
           ackScannerRef.current = null;
@@ -303,10 +317,33 @@ export default function SendPage({ user, onBack, deviceId }) {
       }
     }
 
+    // Final fallback — enumerate and use first available device
     if (!started) {
-      setShowAckScanner(false);
-      setAckPasteError('');
-      // Don't show an error — just let them use upload or paste
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter((d) => d.kind === 'videoinput');
+        if (videoDevices.length > 0) {
+          const scanner = new Html5Qrcode(ACK_SCANNER_ID);
+          ackScannerRef.current = scanner;
+          await scanner.start(
+            { deviceId: { exact: videoDevices[0].deviceId } },
+            { fps: 10, qrbox: { width: 240, height: 240 } },
+            async (decoded) => {
+              await scanner.stop().catch(() => {});
+              ackScannerRef.current = null;
+              setShowAckScanner(false);
+              await processAckCode(decoded);
+            },
+            () => {}
+          );
+          started = true;
+        }
+      } catch { }
+
+      if (!started) {
+        setShowAckScanner(false);
+        // No error — upload/paste options visible below
+      }
     }
   }
 

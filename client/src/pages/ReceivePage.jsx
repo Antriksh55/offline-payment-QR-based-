@@ -49,7 +49,30 @@ export default function ReceivePage({ user, onBack }) {
     setError('');
     setResult(null);
 
-    // Try cameras in order: rear → front → any (covers both mobile and laptop webcam)
+    // Step 1: Request camera permission explicitly via getUserMedia FIRST.
+    // html5-qrcode calls enumerateDevices() before asking for permission —
+    // on many browsers this returns 0 devices if permission was never granted,
+    // causing "No camera found" even when a camera exists.
+    // Requesting permission directly first forces the browser prompt.
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      // Permission granted — stop the stream immediately, html5-qrcode will open its own
+      stream.getTracks().forEach((t) => t.stop());
+    } catch (err) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setError('Camera permission denied. Tap the 🔒 icon in your browser address bar → allow Camera → refresh and try again.');
+        setScanState(SCAN_STATE.IDLE);
+        return;
+      }
+      if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        setError('No camera found on this device. Use "Upload QR Image" or "Paste Payment Data" instead.');
+        setScanState(SCAN_STATE.IDLE);
+        return;
+      }
+      // Other errors — try anyway
+    }
+
+    // Step 2: Try cameras in order: rear → front
     const cameraCandidates = [
       { facingMode: 'environment' }, // mobile rear camera
       { facingMode: 'user' },         // laptop webcam / mobile front camera
@@ -77,18 +100,43 @@ export default function ReceivePage({ user, onBack }) {
           scannerRef.current.stop().catch(() => {});
           scannerRef.current = null;
         }
-        // If permission denied, no point trying other cameras
         if (err.name === 'NotAllowedError' || err.message?.includes('permission')) {
-          setError('Camera permission denied. Please allow camera access in your browser settings, or use "Paste Payment Data" instead.');
+          setError('Camera permission denied. Please allow camera access and try again.');
           setScanState(SCAN_STATE.IDLE);
           return;
         }
+        // Try next camera constraint
       }
     }
 
     if (!started) {
-      setError('No camera found. Use "Upload QR Image" or "Paste Payment Data" instead.');
-      setScanState(SCAN_STATE.IDLE);
+      // Final fallback — try with deviceId enumeration
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter((d) => d.kind === 'videoinput');
+        if (videoDevices.length > 0) {
+          const scanner = new Html5Qrcode(SCANNER_ID);
+          scannerRef.current = scanner;
+          await scanner.start(
+            { deviceId: { exact: videoDevices[0].deviceId } },
+            { fps: 10, qrbox: { width: 280, height: 280 } },
+            async (decodedText) => {
+              await scanner.stop().catch(() => {});
+              scannerRef.current = null;
+              await handleScannedPayload(decodedText);
+            },
+            () => {}
+          );
+          started = true;
+        }
+      } catch {
+        // give up
+      }
+
+      if (!started) {
+        setError('Could not start camera. Try "Upload QR Image" or "Paste Payment Data" instead.');
+        setScanState(SCAN_STATE.IDLE);
+      }
     }
   }
 
