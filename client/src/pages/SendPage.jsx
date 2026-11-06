@@ -217,7 +217,27 @@ export default function SendPage({ user, onBack, deviceId }) {
         deviceSeq
       });
 
+      // Record transaction FIRST (durable), THEN update float counters.
+      // If the app crashes between these two operations, the transaction
+      // entry survives but float counters may not be updated — this is safer
+      // than the reverse (float counter updated but no transaction = seq gap).
       await recordSentTransaction(txn);
+
+      // Now safe to update float counters
+      if (floatMeta?.floatNextSeq !== undefined && deviceSeq !== undefined) {
+        await updateWalletMeta({
+          floatNextSeq: deviceSeq + 1,
+          floatSpentOffline: (floatMeta.floatSpentOffline || 0) + pendingPaise
+        });
+        setFloatMeta((prev) => ({
+          ...prev,
+          floatNextSeq: deviceSeq + 1,
+          floatSpentOffline: (prev?.floatSpentOffline || 0) + pendingPaise,
+          _preGenerateSeq: deviceSeq,
+          _preGenerateSpent: prev?.floatSpentOffline || 0
+        }));
+      }
+
       const dataUrl = await generateQRCode(txn);
       setQrDataUrl(dataUrl);
       setSignedTxn(txn);

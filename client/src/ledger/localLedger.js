@@ -105,10 +105,38 @@ export async function confirmSentTransaction(txnId, receiverVpa) {
  * Cancel a pending_scan transaction (user backed out before receiver scanned).
  * Sets status to CANCELLED so it does not affect balance.
  *
+ * Guard: refuses to cancel if status is already PENDING_SYNC —
+ * that means the receiver already accepted. Cancellation at that point
+ * would leave the receiver with a confirmed entry while sender shows cancelled.
+ *
  * @param {string} txnId
+ * @returns {{ blocked: boolean, reason?: string }}
  */
 export async function cancelSentTransaction(txnId) {
-  return updateTransactionStatus(txnId, TXN_STATUS.CANCELLED);
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('localTransactions', 'readwrite');
+    const store = tx.objectStore('localTransactions');
+    const getReq = store.get(txnId);
+
+    getReq.onsuccess = () => {
+      const entry = getReq.result;
+      if (!entry) { resolve({ blocked: false }); return; }
+
+      // Block cancellation if receiver already accepted
+      if (entry.status === TXN_STATUS.PENDING_SYNC) {
+        resolve({ blocked: true, reason: 'Receiver already accepted — cannot cancel a payment they have received' });
+        return;
+      }
+
+      entry.status = TXN_STATUS.CANCELLED;
+      const putReq = store.put(entry);
+      putReq.onsuccess = () => resolve({ blocked: false });
+      putReq.onerror = () => reject(putReq.error);
+    };
+
+    getReq.onerror = () => reject(getReq.error);
+  });
 }
 
 /**
