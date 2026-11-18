@@ -99,16 +99,22 @@ async function reconcileFloat(deviceId) {
   const float = await OfflineFloat.findOne({ deviceId, status: 'ACTIVE' });
   if (!float) return;
 
-  const unused = float.reservedAmount - float.spentSoFar;
-
-  // Release any unspent portion of the hold back to available balance
-  if (unused > 0) {
-    await releaseHold({
-      txnId: `HOLD_RELEASE-${float.holdTxnId}`,
-      accountNumber: float.accountNumber,
-      amount: unused
-    });
-  }
+  // Release the FULL hold, not just the unused portion.
+  //
+  // Why: For every transaction processed by the Switch, a real DEBIT ledger entry
+  // was already posted via postDoubleEntry(). The HOLD for spentSoFar therefore
+  // overlaps with those DEBITs — if we only release the unused portion (reservedAmount - spentSoFar),
+  // the net HOLD = spentSoFar still reduces getBalance().available, while the DEBITs
+  // reduce it AGAIN. This would understate available balance by spentSoFar.
+  //
+  // Correct approach: release the ENTIRE hold. The real DEBITs posted by the Switch
+  // are the authoritative record of what was spent. The HOLD was a temporary reservation
+  // that is now fully superseded by those DEBITs.
+  await releaseHold({
+    txnId: `HOLD_RELEASE-${float.holdTxnId}`,
+    accountNumber: float.accountNumber,
+    amount: float.reservedAmount   // release the full reserved amount, not just unused
+  });
 
   await OfflineFloat.updateOne({ _id: float._id }, { status: 'RECONCILED' });
 }
@@ -124,14 +130,15 @@ async function expireStaleFloats() {
   });
 
   for (const float of stale) {
-    const unused = float.reservedAmount - float.spentSoFar;
-    if (unused > 0) {
-      await releaseHold({
-        txnId: `HOLD_RELEASE-EXPIRED-${float.holdTxnId}`,
-        accountNumber: float.accountNumber,
-        amount: unused
-      });
-    }
+    // Release full hold on expiry — same reasoning as reconcileFloat():
+    // DEBITs already posted by the Switch account for spentSoFar.
+    // Only releasing the unused portion would leave a net HOLD that
+    // double-counts the spent amount in getBalance().available.
+    await releaseHold({
+      txnId: `HOLD_RELEASE-EXPIRED-${float.holdTxnId}`,
+      accountNumber: float.accountNumber,
+      amount: float.reservedAmount
+    });
     await OfflineFloat.updateOne({ _id: float._id }, { status: 'EXPIRED' });
     console.log(`[Float] Expired float for device ${float.deviceId}, released ${unused} paise hold`);
   }

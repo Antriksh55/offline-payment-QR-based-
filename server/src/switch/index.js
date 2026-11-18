@@ -83,6 +83,11 @@ async function processSingle(txn, floatDeviceId = null) {
     return { txnId, respCode: '02', status: 'REJECTED', message: 'Invalid VPA' };
   }
 
+  // Amount must be a positive integer (paise). Reject zero or negative amounts.
+  if (!Number.isInteger(amount) || amount <= 0) {
+    return { txnId, respCode: '09', status: 'REJECTED', message: 'Invalid amount: must be a positive integer (paise)' };
+  }
+
   // ── STEP 2: Verify signature against CURRENTLY REGISTERED key (Module 12 fix) ─
   // CRITICAL: We look up the public key from the User document, NOT from the payload.
   // This is what makes key rotation (Module 11) actually revoke old devices.
